@@ -1,0 +1,4366 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>행정 AI — RAG</title>
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #16181c; --border: #38444d; --text: #e7e9ea;
+      --muted: #8b98a5; --accent: #1d9bf0; --ok: #00ba7c; --warn: #ffd400;
+      --assistant-bg: #063018;
+      --assistant-border: rgba(0, 186, 124, 0.25);
+      --roundtable-bg: rgba(29, 155, 240, 0.07);
+      /* 채팅 본문·로그·입력란 공통 타이포 (스타일/색은 구역별로 다르게) */
+      --chat-ui-font: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --chat-ui-size: 15px;
+      --chat-ui-line: 1.45;
+      /* 입력창·그라데이션과 겹치지 않도록 스크롤 영역 하단 여백 */
+      --chat-log-pad-bottom: max(14rem, 210px);
+    }
+    html[data-theme="light"] {
+      --bg: #f4f7f9;
+      --panel: #ffffff;
+      --border: #cfd9de;
+      --text: #0f1419;
+      --muted: #536471;
+      --accent: #1d9bf0;
+      --assistant-bg: #e6f7ef;
+      --assistant-border: rgba(0, 186, 124, 0.35);
+      --roundtable-bg: rgba(29, 155, 240, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+    .app { display: flex; height: 100vh; }
+    .sidebar {
+      width: 300px; min-width: 300px; background: var(--panel); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; transition: width 0.2s, min-width 0.2s;
+    }
+    .sidebar.collapsed { width: 73px; min-width: 73px; }
+    .sidebar.collapsed .sb-section-title, .sidebar.collapsed label,
+    .sidebar.collapsed input[type=text], .sidebar.collapsed input[type=password], .sidebar.collapsed input[type=email],
+    .sidebar.collapsed .nav-text, .sidebar.collapsed .llm-key-wrap,
+    .sidebar.collapsed #llmKeyOnboardHint { display: none !important; }
+    .sidebar.collapsed .nav-btn { justify-content: center; padding: 0.65rem 0; }
+    .sb-top { display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem; border-bottom: 1px solid var(--border); }
+    .sidebar.collapsed .sb-top {
+      justify-content: center;
+      padding-left: 0.35rem;
+      padding-right: 0.35rem;
+    }
+    .sb-toggle {
+      background: transparent; border: none; color: var(--text); font-size: 1.25rem; cursor: pointer;
+      padding: 0.35rem 0.5rem; border-radius: 8px;
+    }
+    .sb-toggle:hover { background: var(--border); }
+    .sb-scroll {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .sb-scroll-main {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0.75rem;
+    }
+    .sb-section-title { font-size: 0.7rem; text-transform: uppercase; color: var(--muted); margin: 1rem 0 0.35rem; }
+    label { display: block; font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem; }
+    input, textarea, select {
+      width: 100%; margin-top: 0.2rem; padding: 0.45rem 0.55rem; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 0.85rem;
+    }
+    .btn {
+      margin-top: 0.5rem; padding: 0.45rem 0.75rem; border-radius: 999px; border: none; cursor: pointer;
+      font-weight: 600; font-size: 0.8rem; width: 100%;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-secondary { background: var(--border); color: var(--text); }
+    .btn-sm { width: auto; display: inline-block; margin-right: 0.35rem; }
+    .nav-btn {
+      display: flex; align-items: center; gap: 0.5rem; width: 100%; text-align: left;
+      padding: 0.55rem 0.65rem; margin-top: 0.25rem; border-radius: 10px; border: 1px solid transparent;
+      background: transparent; color: var(--text); cursor: pointer; font-size: 0.88rem;
+    }
+    .nav-btn:hover, .nav-btn.active {
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+      border-color: var(--border);
+    }
+    .nav-ico { width: 1.25rem; text-align: center; }
+    main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .view { flex: 1; display: none; flex-direction: column; min-height: 0; }
+    .view.active { display: flex; }
+    /* —— Gemini 스타일 채팅: 빈 세션은 중앙 입력, 전송 후 하단 고정 —— */
+    /* display 는 .view / .view.active 만 사용 (#view-chat 에 display:flex 를 두면 비활성일 때도 채팅이 보임) */
+    #view-chat {
+      min-height: 0;
+    }
+    .chat-app-header {
+      flex-shrink: 0;
+      z-index: 20;
+      background: var(--bg);
+      border-bottom: none;
+      padding: 0.75rem 1rem;
+      box-sizing: border-box;
+    }
+    .chat-app-header-inner {
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 0.75rem;
+    }
+    .chat-brand-block {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 0;
+      flex-shrink: 0;
+    }
+    .chat-logo-placeholder {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 8px;
+      border: 1px dashed var(--border);
+      background: color-mix(in srgb, var(--panel) 80%, var(--accent));
+      flex-shrink: 0;
+    }
+    .chat-service-name {
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .chat-new-session-btn {
+      flex-shrink: 0;
+      width: 2.35rem;
+      height: 2.35rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 1.35rem;
+      font-weight: 300;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    .chat-new-session-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+    }
+    .theme-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      flex-shrink: 0;
+      margin-left: auto;
+    }
+    .theme-btn {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.3rem 0.5rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .theme-btn.active {
+      background: color-mix(in srgb, var(--accent) 22%, var(--panel));
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .topic-bucket-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin: 0.65rem 0 0.75rem;
+    }
+    .topic-bucket-btn {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.35rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .topic-bucket-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .topic-bucket-btn.active {
+      background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .prompts-topics-split {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      gap: 0.75rem;
+      overflow: hidden;
+    }
+    .prompts-topics-top {
+      flex: 0 0 auto;
+      max-height: 42vh;
+      overflow-y: auto;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .prompts-topics-bottom {
+      flex: 1;
+      min-height: 120px;
+      overflow-y: auto;
+    }
+    .panel-body.prompts-topics-root {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #view-prompts-topics {
+      min-height: 0;
+    }
+    .chat-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      position: relative;
+    }
+    .chat-split-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+    .chat-main.review-split .chat-split-wrap {
+      flex-direction: row;
+      align-items: stretch;
+    }
+    .chat-pane-user {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .chat-pane-reviewer {
+      display: none;
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      flex-direction: column;
+      border-left: 1px solid var(--border);
+      background: color-mix(in srgb, var(--panel) 35%, var(--bg));
+    }
+    .chat-main.review-split .chat-pane-reviewer {
+      display: flex;
+    }
+    .review-role-group { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+    .review-role-btn {
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 0.32rem 0.7rem;
+      border-radius: 999px;
+      border: 2px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .review-role-btn.selected {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+    }
+    .reviewer-chat-log {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0.65rem 0.6rem;
+      scroll-behavior: smooth;
+    }
+    .reviewer-chat-log .chat-log-flow {
+      max-width: none;
+      margin: 0;
+    }
+    .composer-input-area {
+      width: 100%;
+      max-width: 768px;
+      margin: 0 auto;
+      padding: 0 1rem;
+      box-sizing: border-box;
+    }
+    .chat-main.has-conversation .composer-input-area {
+      padding-bottom: 0.15rem;
+    }
+    .composer-reporter-reply-row {
+      display: none;
+      width: 100%;
+      justify-content: flex-end;
+      align-items: center;
+      margin: 0 0 0.25rem;
+      padding: 0 0.15rem 0 0;
+      box-sizing: border-box;
+    }
+    .chat-main.review-split .composer-reporter-reply-row {
+      display: flex;
+    }
+    .composer-reporter-reply-row .btn-reporter-reply {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.28rem 0.65rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--panel) 70%, transparent);
+      color: var(--text);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .composer-reporter-reply-row .btn-reporter-reply:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+    }
+    .chat-input-inner {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      min-width: 0;
+      gap: 0;
+    }
+    .chat-input-body {
+      display: flex;
+      gap: 0.5rem;
+      align-items: flex-end;
+      width: 100%;
+      min-width: 0;
+    }
+    .chat-main.review-split .reviewer-chat-log {
+      padding: 1.25rem 1rem 1rem;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .chat-main.review-split .reviewer-chat-log::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+    .bubble-body-md {
+      line-height: var(--chat-ui-line);
+      white-space: normal;
+    }
+    .bubble-body-md p {
+      margin: 0;
+    }
+    .bubble-body-md p + p {
+      margin-top: 0.4em;
+    }
+    .bubble-body-md li {
+      margin: 0.12em 0;
+    }
+    .bubble-body-md ul, .bubble-body-md ol {
+      margin: 0.28em 0;
+      padding-left: 1.2rem;
+    }
+    .bubble-body-md code {
+      font-size: 0.88em;
+      padding: 0.1em 0.28em;
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--panel) 65%, var(--border));
+    }
+    .bubble-body-md pre {
+      margin: 0.38em 0;
+      padding: 0.5rem 0.6rem;
+      overflow-x: auto;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      font-size: 0.88em;
+    }
+    .bubble-body-md pre code { background: transparent; padding: 0; }
+    .bubble-body-md a { color: var(--accent); word-break: break-all; }
+    .bubble-body-md h1, .bubble-body-md h2, .bubble-body-md h3 {
+      font-size: 1.02em;
+      margin: 0.4em 0 0.22em;
+    }
+    .bubble-body-md h1:first-child,
+    .bubble-body-md h2:first-child,
+    .bubble-body-md h3:first-child {
+      margin-top: 0;
+    }
+    .bubble.reporter-bubble { border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+    .composer-toolbar-top {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.35rem;
+      max-width: 768px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 0 1rem;
+      box-sizing: border-box;
+    }
+    .composer-new-chat-btn {
+      width: 2.4rem;
+      height: 2.4rem;
+      border-radius: 12px;
+      border: 1px dashed var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      flex-shrink: 0;
+    }
+    .composer-new-chat-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 8%, transparent);
+    }
+    .composer-new-chat-btn svg { width: 1.15rem; height: 1.15rem; }
+    .legal-toggle-btn {
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 0.32rem 0.7rem;
+      border-radius: 999px;
+      border: 2px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .legal-toggle-btn.on {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+    }
+    .composer-toolbar-grow {
+      flex: 1;
+      min-width: 0.35rem;
+    }
+    .composer-review-role-group {
+      display: none;
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.45rem;
+      flex-shrink: 0;
+      max-width: min(100%, 340px);
+      justify-content: flex-end;
+    }
+    .chat-main.review-split .composer-review-role-group {
+      display: flex;
+    }
+    .rt-user-persona-wrap {
+      margin: 0.65rem 0 0.5rem;
+    }
+    .rt-user-persona-wrap label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    .rt-user-persona-wrap textarea {
+      width: 100%;
+      min-height: 100px;
+      box-sizing: border-box;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      padding: 0.5rem;
+      font-size: 0.85rem;
+    }
+    #btnReview {
+      width: auto;
+      margin: 0;
+      flex-shrink: 0;
+      padding: 0.32rem 0.65rem;
+      font-size: 0.78rem;
+      border-radius: 10px;
+    }
+    #btnReview.active {
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent);
+    }
+    .chat-main.empty-composer .chat-pane-user .chat-log {
+      flex: 0 0 0; min-height: 0; max-height: 0; overflow: hidden; padding: 0; margin: 0;
+    }
+    .chat-main.has-conversation .chat-pane-user .chat-log {
+      flex: 1; min-height: 0; overflow-y: auto;
+      padding: 1.25rem 1rem var(--chat-log-pad-bottom);
+      scroll-behavior: smooth;
+      scroll-padding-top: 16px;
+      scroll-padding-bottom: 28px;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .chat-main.has-conversation .chat-pane-user .chat-log::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+    .chat-log-flow {
+      width: 100%;
+      max-width: 768px;
+      margin: 0 auto;
+      min-height: 0;
+      padding-top: 0.35rem;
+    }
+    .chat-footer-area {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .chat-main.has-conversation .chat-footer-area {
+      background: linear-gradient(to top, var(--bg) 88%, transparent);
+      border-top: 1px solid rgba(56, 68, 77, 0.45);
+    }
+    .chat-main.empty-composer .chat-footer-area {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding-bottom: 0.25rem;
+    }
+    .chat-main.empty-composer.review-split .chat-split-wrap {
+      flex: 1;
+      min-height: 240px;
+    }
+    .chat-main.empty-composer.review-split .chat-footer-area {
+      flex: 0 0 auto;
+    }
+    .chat-main.empty-composer .composer-wrap {
+      flex: 0 0 auto;
+      display: block;
+      padding: 1.25rem 1rem 0.5rem;
+    }
+    .chat-main.has-conversation .composer-wrap {
+      flex-shrink: 0;
+      display: block;
+      padding: 0.5rem 1rem 0.35rem;
+      background: transparent;
+      border-top: none;
+    }
+    .chat-ai-disclaimer {
+      font-size: 0.72rem;
+      line-height: 1.45;
+      color: var(--muted);
+      text-align: center;
+      max-width: 768px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 0.25rem 1rem 0.75rem;
+    }
+    .composer-inner { width: 100%; max-width: 768px; margin: 0 auto; }
+    .composer-hint {
+      text-align: center; color: var(--muted); margin: 0 0 1.25rem;
+      font-family: var(--chat-ui-font); font-size: var(--chat-ui-size); line-height: var(--chat-ui-line);
+      font-weight: 500; letter-spacing: -0.02em;
+    }
+    .chat-main.has-conversation .composer-hint { display: none; }
+    @keyframes chatDot {
+      0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+      40% { opacity: 1; transform: scale(1); }
+    }
+    /* 질의 직후 ~ 답변 직전: 생성 중 문구 + 1줄 로그(토글로 상세 로그) */
+    .reply-pending {
+      max-width: 100%;
+      margin: 0 0 0.85rem 0;
+      padding: 0.35rem 0 0.65rem;
+      scroll-margin-bottom: 12px;
+      font-family: var(--chat-ui-font);
+      font-size: var(--chat-ui-size);
+      line-height: var(--chat-ui-line);
+    }
+    .reply-pending-status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--accent);
+      margin-bottom: 0.4rem;
+      font-weight: 500;
+    }
+    .reply-pending-status[hidden] { display: none !important; }
+    .reply-pending-dots { display: flex; gap: 4px; align-items: center; }
+    .reply-pending-dots span {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+      animation: chatDot 1.2s ease-in-out infinite;
+    }
+    .reply-pending-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .reply-pending-dots span:nth-child(3) { animation-delay: 0.4s; }
+    .reply-pending-log-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-height: calc(var(--chat-ui-line) * 1em);
+    }
+    .reply-log-one-line {
+      flex: 1;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--muted);
+    }
+    .reply-log-toggle {
+      flex-shrink: 0;
+      background: transparent;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+      font-family: var(--chat-ui-font);
+      font-size: var(--chat-ui-size);
+      line-height: var(--chat-ui-line);
+      padding: 0.15rem 0;
+    }
+    .reply-log-toggle:hover { opacity: 0.9; }
+    .reply-log-full {
+      margin: 0.4rem 0 0;
+      padding: 0.55rem 0.65rem;
+      max-height: min(40vh, 260px);
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: var(--panel);
+      border-radius: 10px;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      font-family: var(--chat-ui-font);
+      font-size: var(--chat-ui-size);
+      line-height: var(--chat-ui-line);
+    }
+    #chatLog .bubble,
+    #chatLog .bubble .bubble-body,
+    #chatLog .bubble .bubble-body-md,
+    #chatLog .bubble .meta,
+    #chatLog .legal-links,
+    #chatLog .legal-links a,
+    #chatLog .legal-links-title,
+    #reviewerLog .bubble,
+    #reviewerLog .bubble .bubble-body,
+    #reviewerLog .bubble .bubble-body-md,
+    .composer-inner .chat-input-body textarea,
+    .composer-inner .chat-input-row label,
+    .composer-inner .chat-input-body .btn,
+    .composer-inner .composer-reporter-reply-row .btn,
+    .composer-inner .composer-toolbar-top .btn {
+      font-family: var(--chat-ui-font) !important;
+      font-size: var(--chat-ui-size) !important;
+      line-height: var(--chat-ui-line) !important;
+    }
+    .bubble { padding: 0.65rem 0.9rem; margin-bottom: 0.45rem; border-radius: 14px; max-width: 100%; }
+    .bubble.user {
+      background: var(--panel); border: 1px solid var(--border); margin-left: auto;
+      scroll-margin-top: 12px; scroll-margin-bottom: 6px;
+    }
+    .bubble.assistant { background: var(--assistant-bg); border: 1px solid var(--assistant-border); }
+    /* 로그: 색·배경만 구분, 폰트 크기는 동일 */
+    .bubble.system { background: var(--panel); border-left: 3px solid var(--warn); color: var(--muted); }
+    .meta { color: var(--muted); margin-top: 0.35rem; }
+    .bubble-body { white-space: pre-wrap; word-break: break-word; }
+    .bubble-body.bubble-body-md { white-space: normal; }
+    .bubble-copy-row {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 0.35rem;
+      margin-top: 0.4rem;
+      padding-top: 0.35rem;
+      border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    }
+    .bubble-copy-btn {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.28rem 0.55rem;
+      border-radius: 999px;
+      cursor: pointer;
+      line-height: 1.2;
+    }
+    .bubble-copy-btn:hover { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); border-color: var(--accent); }
+    .bubble-copy-btn:active { opacity: 0.92; }
+    .review-out-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 0.35rem;
+      margin-top: 0.45rem;
+      padding-top: 0.4rem;
+      border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    }
+    .review-out-bubble-wrap { width: 100%; }
+    .legal-links {
+      margin-top: 0.55rem; padding-top: 0.42rem; border-top: 1px solid rgba(0,186,124,0.22);
+      display: flex; flex-direction: column; gap: 0.32rem;
+    }
+    .legal-links-title { color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    .legal-links a { color: var(--accent); text-decoration: underline; cursor: pointer; word-break: break-all; }
+    .legal-links a:hover { opacity: 0.9; }
+    /* 검토·문서 초안: 채팅 assistant 말풍선과 동일한 본문 렌더 */
+    .review-out-shell {
+      margin-top: 0.85rem;
+      max-height: min(55vh, 560px);
+      overflow: auto;
+      scroll-margin-bottom: 8px;
+    }
+    .review-out-shell .bubble.assistant {
+      margin-bottom: 0;
+      max-width: 100%;
+    }
+    .review-out-shell .bubble.assistant .bubble-body-md {
+      font-family: var(--chat-ui-font) !important;
+      font-size: var(--chat-ui-size) !important;
+      line-height: var(--chat-ui-line) !important;
+    }
+    .review-feature-dl {
+      margin: 0.45rem 0 0;
+      padding: 0;
+      font-size: 0.8rem;
+      line-height: 1.48;
+    }
+    .review-feature-dl dt {
+      font-weight: 600;
+      color: var(--text);
+      margin-top: 0.5rem;
+    }
+    .review-feature-dl dt:first-child {
+      margin-top: 0;
+    }
+    .review-feature-dl dd {
+      margin: 0.18rem 0 0;
+      padding: 0;
+      color: var(--muted);
+    }
+    .review-help-details {
+      margin: 0.55rem 0 0.35rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.45rem 0.65rem;
+      background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+    }
+    .review-help-details summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.84rem;
+      color: var(--text);
+      list-style-position: outside;
+    }
+    .review-help-details[open] summary {
+      margin-bottom: 0.35rem;
+    }
+    .bubble.roundtable-host .roundtable-wrap {
+      display: flex; flex-direction: column; gap: 0.48rem;
+    }
+    .roundtable-banner {
+      font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--muted); margin-bottom: 0.15rem;
+    }
+    .roundtable-turn {
+      border-left: 3px solid var(--accent);
+      padding: 0.42rem 0.6rem 0.48rem 0.7rem;
+      background: var(--roundtable-bg);
+      border-radius: 0 10px 10px 0;
+    }
+    .roundtable-turn .rt-label {
+      font-weight: 600; font-size: 0.9rem; color: var(--accent); margin-bottom: 0.22rem;
+    }
+    .roundtable-turn .rt-text {
+      white-space: pre-wrap; word-break: break-word; font-size: var(--chat-ui-size); line-height: var(--chat-ui-line);
+    }
+    .roundtable-turn .rt-text.bubble-body-md { white-space: normal; }
+    .rt-backdrop {
+      position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.55);
+      display: none; align-items: center; justify-content: center; padding: 1rem;
+    }
+    .rt-backdrop.rt-open { display: flex; }
+    .rt-dialog {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+      max-width: 440px; width: 100%; padding: 1.1rem; box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+    }
+    .rt-title { margin: 0 0 0.35rem; font-size: 1rem; }
+    .rt-hint { font-size: 0.8rem; color: var(--muted); margin: 0 0 0.75rem; line-height: 1.45; }
+    .rt-role-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.85rem;
+      margin-bottom: 0.85rem;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+    }
+    .rt-role-btn {
+      font-size: calc(0.78rem + 1pt);
+      font-weight: 600;
+      padding: 0.48rem 1.05rem;
+      border-radius: 999px;
+      border: 2px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+      cursor: pointer;
+      flex-shrink: 0;
+      text-align: center;
+      min-width: 5.4rem;
+    }
+    .rt-role-btn.selected {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+    }
+    .rt-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.75rem; }
+    .rt-actions .btn { width: auto; margin: 0; }
+    .chat-input-row {
+      padding: 0.45rem 0.75rem 0.65rem;
+      margin-top: 0;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--panel);
+      display: block;
+      flex-shrink: 0;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+    }
+    .chat-main.has-conversation .chat-input-row {
+      border-radius: 14px;
+    }
+    .chat-input-body textarea#chatMsg {
+      flex: 1;
+      min-height: 73px;
+      max-height: 280px;
+      resize: vertical;
+      margin-top: 0;
+      padding: 0.5rem 0.6rem;
+      border: none;
+      background: transparent;
+      color: var(--text);
+    }
+    .chat-input-body textarea#chatMsg:focus { outline: none; }
+    .chat-input-body .btn-primary { border-radius: 12px; margin-top: 0; padding: 0.5rem 1rem; }
+    .panel-body { padding: 1rem; overflow-y: auto; flex: 1; }
+    .session-item {
+      padding: 0.6rem 0.75rem; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 0.4rem;
+      cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem;
+    }
+    .session-item:hover, .session-item.current { border-color: var(--accent); }
+    .prompt-item { align-items: flex-start; }
+    .prompt-item-col { flex: 1; min-width: 0; text-align: left; }
+    .prompt-item-preview {
+      font-size: 0.88rem; line-height: 1.35; margin-bottom: 0.28rem; word-break: break-word;
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .prompt-item-meta { font-size: 0.72rem; color: var(--muted); line-height: 1.3; }
+    .bubble-highlight {
+      box-shadow: 0 0 0 2px var(--accent); border-radius: 14px;
+      transition: box-shadow 0.35s ease;
+    }
+    /* display 는 .view / .view.active 에만 둔다. #view-logs 에 display:flex 를 쓰면 .view{display:none} 을 덮어써 로그가 항상 보임 */
+    #view-logs.panel-host { flex: 1; min-height: 0; }
+    #view-logs .panel-body { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    .app-log-panel {
+      flex: 1;
+      min-height: 120px;
+      overflow: auto;
+      margin: 0;
+      padding: 0.75rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-family: var(--chat-ui-font);
+      font-size: var(--chat-ui-size);
+      line-height: var(--chat-ui-line);
+      color: var(--muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .err { color: #f4212e; font-size: 0.85rem; margin-top: 0.5rem; }
+    .user-pill { font-size: 0.75rem; color: var(--muted); padding: 0.35rem 0.5rem; background: var(--panel); border-radius: 8px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .current-model-banner {
+      font-size: 0.82rem;
+      color: var(--text);
+      padding: 0.55rem 0.65rem;
+      margin-bottom: 0.65rem;
+      background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+      border-radius: 10px;
+      line-height: 1.4;
+    }
+    .user-account-card {
+      margin-bottom: 1rem;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--panel);
+    }
+    .user-account-card .sb-section-title { margin-top: 0; }
+    .current-model-banner .cm-label { color: var(--muted); font-size: 0.75rem; display: block; margin-bottom: 0.2rem; }
+    .rag-doc-list { display: flex; flex-direction: column; gap: 0.4rem; }
+    .rag-doc-row {
+      display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.65rem; border-radius: 10px;
+      border: 2px solid var(--border); cursor: pointer; font-size: 0.95rem; line-height: 1.35;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .rag-doc-row.unselected { opacity: 0.88; border-style: dashed; }
+    .rag-doc-row.selected {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+    }
+    .rag-doc-row .rag-doc-main { flex: 1; min-width: 0; }
+    .rag-doc-row .rag-doc-title { font-weight: 650; font-size: 0.98rem; word-break: break-word; }
+    .rag-doc-row .rag-doc-meta { font-size: 0.82rem; color: var(--muted); margin-top: 0.15rem; }
+    .rag-doc-row .rag-doc-actions { flex-shrink: 0; display: flex; gap: 0.25rem; align-items: center; }
+    .rag-pdf-mode-wrap { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.35rem 0 0.5rem; }
+    .rag-pdf-mode-opt {
+      padding: 0.5rem 0.65rem; border-radius: 10px; border: 2px solid var(--border); cursor: pointer;
+      font-size: 0.92rem; line-height: 1.35; transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .rag-pdf-mode-opt.unselected { opacity: 0.88; border-style: dashed; }
+    .rag-pdf-mode-opt.selected {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+    }
+    .rag-pdf-mode-opt .opt-title { font-weight: 650; }
+    .rag-pdf-mode-opt .opt-hint { font-size: 0.78rem; color: var(--muted); margin-top: 0.12rem; }
+    .rag-file-drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 0.85rem 0.75rem;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0.35rem 0 0.5rem;
+      line-height: 1.45;
+      background: color-mix(in srgb, var(--panel) 92%, var(--accent) 8%);
+      transition: border-color 0.15s ease, background 0.15s ease;
+      cursor: pointer;
+    }
+    .rag-file-drop-zone.dragover {
+      border-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+      color: var(--text);
+    }
+    .rag-file-drop-zone.has-staged-file {
+      border-color: var(--ok);
+      background: color-mix(in srgb, var(--ok) 10%, var(--panel));
+      color: var(--text);
+    }
+    .rag-drop-zone-ready-label {
+      font-weight: 650;
+      color: var(--ok);
+      font-size: 0.82rem;
+      margin-bottom: 0.25rem;
+    }
+    .rag-drop-zone-ready-name {
+      font-size: 0.88rem;
+      word-break: break-all;
+    }
+    .rag-drop-zone-ready-hint {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 0.4rem;
+      line-height: 1.4;
+    }
+    .data-reset-grid { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.45rem; }
+    .data-reset-grid .btn { width: auto; margin-top: 0; font-size: 0.78rem; padding: 0.35rem 0.55rem; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sb-top">
+        <button type="button" class="sb-toggle" id="sbToggle" title="사이드바 접기/펼치기">☰</button>
+      </div>
+      <div class="sb-scroll">
+        <div class="sb-scroll-main">
+          <div id="llm-key-wrap" class="llm-key-wrap" style="display:none;">
+            <div class="sb-section-title hide-when-collapsed" id="llmKeySectionTitle">LLM API 키 (최초 1회)</div>
+            <p id="llmKeyOnboardHint" class="hide-when-collapsed" style="font-size:0.72rem;color:var(--muted);margin:0 0 0.5rem;line-height:1.4;">
+              채팅·모델 사용을 위해 API 키가 필요합니다. 서버에 암호화되어 저장됩니다. 이후 변경은 <b>유저 정보</b>에서 할 수 있습니다.
+            </p>
+            <div id="llmKeyForm" class="key-form hide-when-collapsed">
+              <label>OpenAI</label>
+              <input type="password" id="keyOpenai" autocomplete="off" placeholder="sk-…" />
+              <label>Anthropic</label>
+              <input type="password" id="keyAnthropic" autocomplete="off" placeholder="선택" />
+              <label>Google (Gemini)</label>
+              <input type="password" id="keyGoogle" autocomplete="off" placeholder="선택" />
+              <button type="button" class="btn btn-primary" id="btnSaveKeys">키 저장</button>
+            </div>
+          </div>
+
+          <button type="button" class="nav-btn active" data-view="chat"><span class="nav-ico">💬</span><span class="nav-text">채팅</span></button>
+          <button type="button" class="nav-btn" data-view="review"><span class="nav-ico">✅</span><span class="nav-text">검토·문서 초안</span></button>
+          <button type="button" class="nav-btn" data-view="rag"><span class="nav-ico">📚</span><span class="nav-text">RAG 소스</span></button>
+          <button type="button" class="nav-btn" data-view="prompts-topics"><span class="nav-ico">🏷️</span><span class="nav-text">토픽·질문</span></button>
+          <button type="button" class="nav-btn" data-view="logs"><span class="nav-ico">📜</span><span class="nav-text">로그</span></button>
+          <button type="button" class="nav-btn" data-view="user"><span class="nav-ico">👤</span><span class="nav-text">유저 정보</span></button>
+        </div>
+      </div>
+    </aside>
+
+    <main>
+      <div class="view active" id="view-chat">
+        <header class="chat-app-header" aria-label="앱 상단">
+          <div class="chat-app-header-inner">
+            <div class="chat-brand-block">
+              <span class="chat-logo-placeholder" title="로고 예정"></span>
+              <span class="chat-service-name">행정 AI</span>
+            </div>
+            <div class="theme-toolbar">
+              <button type="button" class="theme-btn" id="themeBtnDark" data-theme-set="dark">다크</button>
+              <button type="button" class="theme-btn" id="themeBtnLight" data-theme-set="light">화이트</button>
+            </div>
+          </div>
+        </header>
+        <div class="chat-main empty-composer" id="chatMain">
+          <div class="chat-split-wrap" id="chatSplitWrap">
+            <div class="chat-pane-user" id="chatPaneUser">
+              <div id="chatLog" class="chat-log" role="log" aria-label="사용자 대화">
+                <div id="chatLogFlow" class="chat-log-flow"></div>
+              </div>
+            </div>
+            <div class="chat-pane-reviewer" id="chatPaneReviewer" aria-hidden="true">
+              <div id="reviewerLog" class="chat-log reviewer-chat-log" role="log" aria-label="검토자 의견">
+                <div id="reviewerLogFlow" class="chat-log-flow"></div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-footer-area" id="chatFooterArea">
+            <div class="composer-wrap" id="composerWrap">
+              <div class="composer-inner">
+                <p class="composer-hint" id="composerHint">무엇이든 물어보세요</p>
+                <div class="composer-toolbar-top">
+                  <button type="button" class="composer-new-chat-btn" id="btnNewChatComposer" title="새 채팅" aria-label="새 채팅">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>
+                      <path d="M8 9h8M8 13h5"/>
+                    </svg>
+                  </button>
+                  <button type="button" class="legal-toggle-btn" id="legalToggle" role="switch" aria-checked="false">법령</button>
+                  <span class="composer-toolbar-grow" aria-hidden="true"></span>
+                  <div class="composer-review-role-group review-role-group" id="composerReviewRoleGroup" role="radiogroup" aria-label="대화 모드(검토자) 역할 — 하나만 선택">
+                    <button type="button" class="review-role-btn selected" data-role="supervisor" role="radio" aria-checked="true" title="클릭: 선택 · 오른쪽 클릭: 페르소나 편집">상급자</button>
+                    <button type="button" class="review-role-btn" data-role="councilor" role="radio" aria-checked="false" title="클릭: 선택 · 오른쪽 클릭: 페르소나 편집">시의원</button>
+                    <button type="button" class="review-role-btn" data-role="citizen" role="radio" aria-checked="false" title="클릭: 선택 · 오른쪽 클릭: 페르소나 편집">시민</button>
+                    <button type="button" class="review-role-btn" data-role="custom" id="reviewRoleToolbarCustom" role="radio" aria-checked="false" title="오른쪽 클릭: 사용자 페르소나 입력">사용자</button>
+                  </div>
+                  <button type="button" class="btn btn-secondary" id="btnReview" title="대화 모드(검토) 패널 켜기/끄기">대화 모드</button>
+                </div>
+                <div class="composer-input-area">
+                  <div class="chat-input-row">
+                    <div class="chat-input-inner">
+                      <div class="composer-reporter-reply-row" id="composerReporterReplyRow" aria-hidden="true">
+                        <button type="button" class="btn-reporter-reply" id="btnReporterReply" title="검토자 최신 의견에 보고자 답변 자동 생성">보고자 답변</button>
+                      </div>
+                      <div class="chat-input-body">
+                        <textarea id="chatMsg" placeholder="메시지를 입력하세요" rows="2"></textarea>
+                        <button type="button" class="btn btn-primary" style="width:auto;margin:0;flex-shrink:0;" id="btnSend">전송</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p class="chat-ai-disclaimer" id="chatAiDisclaimer">
+              생성형 AI는 실수를 할 수 있습니다. 법령·행정 판단은 반드시 공식 문서와 담당 부서 확인을 병행하세요.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-review">
+        <div class="panel-body">
+          <p style="color:var(--muted);font-size:0.88rem;line-height:1.45;margin:0 0 0.35rem;">
+            <b>채팅에서 마지막으로 잡힌 토픽</b>을 기준으로 <b>통합 보고서</b> 초안을 만듭니다. (설명자료·의회 대응·질의 시뮬 요소를 한 문서 흐름으로 포함)
+          </p>
+          <details class="review-help-details">
+            <summary>통합 보고서·양식·체인 설명</summary>
+            <dl class="review-feature-dl">
+              <dt>통합 보고서</dt>
+              <dd>
+                개요·주요 내용·상급 검토 포인트에 더해, 설명자료만의 축(목적·근거·추진·효과), 의회 대응 축(예상 질의·답변 초안·향후 계획), 의회·상급 질의
+                시뮬 블록을 <b>한 번씩만</b> 다루도록 통합합니다. 중복 문단은 피합니다.
+              </dd>
+              <dt>시나리오 힌트</dt>
+              <dd>비우면 반영하지 않습니다. 적으면 보고서 작성(및 API 시뮬 체인)에 각도·쟁점으로 넘깁니다.</dd>
+              <dt>서식 양식 파일</dt>
+              <dd>
+                HWP·HWPX·DOC·DOCX를 드래그 앤 드롭(또는 클릭 선택)하면 텍스트를 추출해 목차·항목에 맞춰 본문을 채웁니다. 보고서 생성 시 항상 <b>작성 보강 → 상급자 검토 → 법령 점검</b> 순 3단 에이전트가 실행되며, 양식이 있으면 각 단계에 반영됩니다.
+              </dd>
+              <dt>Word 다운로드</dt>
+              <dd>양식을 사용해 생성한 경우(서버에서 양식 반영이 적용된 경우) <b>Word로 다운로드</b>로 양식에 맞춘 작성(보강) 본문을 .docx로 받을 수 있습니다.</dd>
+            </dl>
+          </details>
+          <label style="font-size:0.82rem;color:var(--muted);display:block;margin:0.35rem 0 0.2rem;">시나리오 힌트 (선택 · 비우면 생략)</label>
+          <textarea
+            id="reportScenarioHint"
+            style="min-height:52px;width:100%;box-sizing:border-box;margin-bottom:0.45rem;"
+            placeholder="예: 예산 삭감 압박, 특정 조례 적용 여부, 의회 질문 방향…"
+          ></textarea>
+          <label style="font-size:0.82rem;color:var(--muted);display:block;margin:0 0 0.2rem;">보고서 서식 파일 (선택 · HWP, HWPX, DOC, DOCX)</label>
+          <div
+            id="reportTemplateDropZone"
+            class="rag-file-drop-zone"
+            tabindex="0"
+            role="button"
+            aria-label="양식 파일을 여기에 놓거나 클릭하여 선택"
+          >
+            <div id="reportTemplateDropZoneIdle">
+              양식을 여기에 놓거나 클릭하여 선택<br />
+              <span style="font-size:0.74rem;opacity:0.92;">HWP · HWPX · DOC · DOCX</span>
+            </div>
+            <div id="reportTemplateDropZoneReady" style="display: none;">
+              <div class="rag-drop-zone-ready-label">양식 선택됨 · 보고서 생성 시 사용</div>
+              <div class="rag-drop-zone-ready-name" id="reportTemplateDropZoneReadyName"></div>
+              <div class="rag-drop-zone-ready-hint">다른 파일을 놓으면 교체됩니다.</div>
+            </div>
+          </div>
+          <input
+            type="file"
+            id="reportTemplateFile"
+            accept=".hwp,.hwpx,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;"
+            aria-hidden="true"
+          />
+          <div style="margin:0.45rem 0 0.5rem;">
+            <button type="button" class="btn btn-primary btn-sm review-compose-btn" data-kind="report">보고서</button>
+          </div>
+          <div id="reviewOutShell" class="review-out-shell" aria-label="문서 초안 출력">
+            <div class="bubble assistant review-out-bubble-wrap">
+              <div id="reviewOut" class="bubble-body" style="color:var(--muted);font-size:0.85rem;">
+                「보고서」를 누르면 이 영역이 비운 뒤 「생성 중입니다…」가 표시되고, 완료되면 초안이 나옵니다. 형식은 채팅 답변과 같습니다.
+              </div>
+              <div id="reviewOutActions" class="review-out-actions" hidden>
+                <button type="button" class="bubble-copy-btn" id="btnReviewOutCopy" title="화면에 보이는 초안 전체를 클립보드에 복사">복사</button>
+                <button type="button" class="bubble-copy-btn" id="btnReviewOutDocx" title="양식 반영 작성 본문을 Word 파일로 저장" hidden>
+                  Word로 다운로드
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-rag">
+        <div class="panel-body">
+          <p style="color:var(--muted);font-size:0.85rem;margin:0 0 0.5rem;">
+            검색에 쓸 <b>소스를 목록에서 선택</b>하면 채팅 시 해당 문서의 청크만 하이브리드 검색에 사용합니다. <b>이름 줄을 클릭</b>해 켜고 끕니다.
+          </p>
+          <div class="sb-section-title" style="margin-top:0;">등록된 소스 목록</div>
+          <div style="display:flex;gap:0.35rem;flex-wrap:wrap;align-items:center;margin:0.25rem 0 0.35rem;">
+            <button type="button" class="btn btn-secondary btn-sm" id="btnLoadDocs">목록 새로고침</button>
+          </div>
+          <div id="docCheckList" class="rag-doc-list" style="margin:0.35rem 0 0.65rem;max-height:260px;overflow:auto;"></div>
+          <p style="font-size:0.76rem;color:var(--muted);margin:0 0 0.85rem;line-height:1.45;">
+            <b>내가 등록한 소스</b>는 목록에서 <b>오른쪽 클릭</b>하면 표시 제목을 바꿀 수 있습니다. 동일 URL·동일 파일 내용을 다시 올리면 기존 청크를 교체합니다.
+          </p>
+          <hr style="border-color:var(--border);margin:1rem 0;" />
+          <div class="sb-section-title">자주 찾는 법령</div>
+          <p style="color:var(--muted);font-size:0.82rem;margin:0.25rem 0 0.45rem;line-height:1.5;">
+            채팅에서 법령 연동으로 <b>실제 답변에 쓰인</b> 법령이 사용자별로 누적됩니다(조회 횟수 순).
+            목록의 ID는 링크·검색 조문이면 <b>일련번호(MST)</b>인 경우가 많고, <b>법령 소스 등록</b>에는 본문 API의 <b>법령ID</b>를 넣습니다. 같은 법령이라도 두 숫자가 다를 수 있으며, 등록 후 제목·메타에 둘 다 표시됩니다. (OpenAI 키 필요)
+          </p>
+          <button type="button" class="btn btn-secondary btn-sm" id="btnLoadLawPopularity">목록 새로고침</button>
+          <div id="lawPopularityList" style="margin:0.5rem 0;font-size:0.85rem;max-height:220px;overflow:auto;"></div>
+          <hr style="border-color:var(--border);margin:1rem 0;" />
+          <div class="sb-section-title">소스 파일 (PDF·문서·이미지)</div>
+          <p style="font-size:0.78rem;color:var(--muted);margin:0 0 0.45rem;line-height:1.45;">
+            아래 영역에 <b>드래그 앤 드롭</b>하거나 파일을 고른 뒤 <b>파일 소스 등록</b>을 누르세요.
+            <b>PDF</b>는 기본으로 <b>텍스트 레이어만</b> 추출합니다(스캔 PDF는 글자가 없을 수 있음). 필요할 때만 <b>텍스트+OCR</b>을 고르세요.
+          </p>
+          <div class="rag-pdf-mode-wrap" id="ragPdfModeWrap" role="group" aria-label="PDF 추출 방식">
+            <div class="rag-pdf-mode-opt selected" data-pdf-mode="text_only" id="ragPdfModeText" tabindex="0">
+              <div class="opt-title">텍스트 레이어만 (기본)</div>
+              <div class="opt-hint">PDF에 대해 OCR 생략 · 대용량은 쪽 단위로 나눠 처리</div>
+            </div>
+            <div class="rag-pdf-mode-opt unselected" data-pdf-mode="hybrid" id="ragPdfModeHybrid" tabindex="0">
+              <div class="opt-title">텍스트 + OCR</div>
+              <div class="opt-hint">글자 레이어 + 필요 시 이미지 OCR · 40쪽 이하 전 쪽 OCR 시도</div>
+            </div>
+          </div>
+          <div
+            id="ragFileDropZone"
+            class="rag-file-drop-zone"
+            tabindex="0"
+            role="button"
+            aria-label="파일을 여기에 놓거나 클릭하여 선택"
+          >
+            <div id="ragFileDropZoneIdle">
+              여기에 파일을 놓거나 클릭하여 선택<br />
+              <span style="font-size:0.74rem;opacity:0.92;">PDF, TXT, MD, 이미지(PNG·JPEG·WEBP·GIF 등), PPT, PPTX, XLS, XLSX, DOC, DOCX, HWP, HWPX</span>
+            </div>
+            <div id="ragFileDropZoneReady" style="display: none;">
+              <div class="rag-drop-zone-ready-label">등록 준비</div>
+              <div class="rag-drop-zone-ready-name" id="ragFileDropZoneReadyName"></div>
+              <div class="rag-drop-zone-ready-hint">아래 「파일 소스 등록」을 누르면 서버에 등록됩니다.</div>
+            </div>
+          </div>
+          <input
+            type="file"
+            id="ragPdfFile"
+            accept=".pdf,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff,.ppt,.pptx,.xls,.xlsx,.doc,.docx,.hwp,.hwpx,application/pdf"
+            style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;"
+            aria-hidden="true"
+          />
+          <button type="button" class="btn btn-primary" id="btnRagPdfIngest" style="margin-top:0.35rem;">파일 소스 등록</button>
+          <hr style="border-color:var(--border);margin:1rem 0;" />
+          <div class="sb-section-title">웹 페이지 (URL)</div>
+          <label>URL</label>
+          <input type="text" id="ragUrl" placeholder="https://example.go.kr/page (또는 example.go.kr/page)" inputmode="url" style="margin-top:0.2rem;" />
+          <button type="button" class="btn btn-primary" id="btnRagUrlIngest" style="margin-top:0.45rem;">URL 소스 등록</button>
+          <p style="font-size:0.76rem;color:var(--muted);margin:0.35rem 0 0;line-height:1.45;">
+            페이지의 <b>제목(title)</b>이 소스 이름으로 자동 설정됩니다. 같은 URL을 다시 가져오면 해당 소스의 청크를 교체합니다.
+          </p>
+          <hr style="border-color:var(--border);margin:1rem 0;" />
+          <div class="sb-section-title">본문 직접 입력</div>
+          <label>본문</label>
+          <textarea id="ragBody" style="min-height:120px;margin-top:0.2rem;" placeholder="검색에 넣을 텍스트…"></textarea>
+          <p style="font-size:0.76rem;color:var(--muted);margin:0.3rem 0 0.35rem;line-height:1.45;">
+            비어 있지 않은 <b>첫 줄</b>을 제목 후보로 씁니다. 없으면 「직접 입력 소스」로 표시됩니다.
+          </p>
+          <button type="button" class="btn btn-primary" id="btnRagIngest">소스 등록</button>
+          <hr style="border-color:var(--border);margin:1.1rem 0;" />
+          <div style="padding:0.65rem 0.75rem;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb, var(--accent) 5%, var(--panel));">
+            <div class="sb-section-title" style="margin-top:0;">안내</div>
+            <ol style="margin:0.35rem 0 0;padding-left:1.15rem;font-size:0.8rem;color:var(--text);line-height:1.55;">
+              <li><b>자주 찾는 법령</b> → 행에서 <b>법령 소스 등록</b>.</li>
+              <li><b>소스 파일</b> → 드롭 또는 파일 선택 후 <b>파일 소스 등록</b>(위 확장자).</li>
+              <li><b>URL</b> → 주소 입력 후 <b>URL 소스 등록</b>.</li>
+              <li><b>직접 입력</b> → 본문 입력 후 <b>소스 등록</b>.</li>
+              <li>채팅에서는 목록에서 <b>선택한 소스만</b> 검색 범위로 씁니다(선택 상태는 브라우저에 저장).</li>
+            </ol>
+            <p style="font-size:0.76rem;color:var(--muted);margin:0.5rem 0 0;line-height:1.45;">
+              위에 없는 확장자는 등록할 수 없으며, 지원 형식이라도 서버에 변환기가 없으면 안내 메시지가 표시될 수 있습니다. 그 경우 PDF나 TXT로 저장한 뒤 등록하세요.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-prompts-topics">
+        <div class="panel-body prompts-topics-root">
+          <p style="color:var(--muted);font-size:0.85rem;margin:0;">
+            내가 보낸 <b>질문</b>은 아래 목록에 모입니다. 항목을 누르면 채팅으로 이동합니다.
+            <b>대분류</b>·<b>중분류</b>를 모두 「전체」로 두면 시간 역순 전체와 같습니다.
+            그 외에는 같은 대분류 안에서 질문을 <b>최대 5개의 중분류</b>로 자동 묶습니다(세션·시간대 기준).
+          </p>
+          <button type="button" class="btn btn-secondary btn-sm" id="btnRefreshPrompts" style="margin-top:0.5rem;">새로고침</button>
+          <div class="prompts-topics-split">
+            <div class="prompts-topics-top">
+              <div class="sb-section-title" style="margin-top:0.35rem;">대분류</div>
+              <div id="topicBucketBar" class="topic-bucket-bar" aria-label="질문 대분류"></div>
+              <div class="sb-section-title" style="margin-top:0.15rem;">중분류 (자동 · 최대 5)</div>
+              <div id="midTopicBucketBar" class="topic-bucket-bar" aria-label="자동 토픽"></div>
+            </div>
+            <div class="prompts-topics-bottom">
+              <div class="sb-section-title" style="margin-top:0;">내 질문</div>
+              <div id="topicPromptList"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="view panel-host" id="view-logs">
+        <div class="panel-body">
+          <p style="color:var(--muted);font-size:0.85rem;margin:0 0 0.5rem;">
+            <b>이 패널</b>에만 로그인·세션·RAG·키 저장 등 동작 기록과 <b>답변 메타</b>(intent·토픽·모델)가 쌓입니다.
+            채팅 화면의 「로그」 토글은 <b>해당 질문</b>의 전송·응답·법령 API 진행 줄만 보여 줍니다(세션 목록 갱신 등은 여기서만).
+          </p>
+          <div style="display:flex;gap:0.35rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+            <button type="button" class="btn btn-secondary btn-sm" id="btnClearAppLog">로그 비우기</button>
+          </div>
+          <pre id="appLogPanel" class="app-log-panel" aria-label="앱 로그"></pre>
+        </div>
+      </div>
+
+      <div class="view" id="view-user">
+        <div class="panel-body">
+          <div class="user-account-card">
+            <div class="sb-section-title">계정</div>
+            <div id="authArea" class="auth-form">
+              <div id="loginForm">
+                <label>로그인 ID (이메일)</label>
+                <input type="email" id="loginEmail" autocomplete="username" />
+                <label>비밀번호</label>
+                <input type="password" id="loginPw" autocomplete="current-password" />
+                <button type="button" class="btn btn-primary" id="btnLogin">로그인</button>
+                <button type="button" class="btn btn-secondary" id="btnSignup">회원가입</button>
+              </div>
+              <div id="loggedBar" style="display:none;">
+                <div class="user-pill" id="userPill"></div>
+                <button type="button" class="btn btn-secondary" id="btnLogout">로그아웃</button>
+              </div>
+              <div id="demoArea" style="display:none;">
+                <label>데모 사용자 ID</label>
+                <input type="text" id="demoUserId" placeholder="local-demo" />
+                <button type="button" class="btn btn-primary" id="btnDemoApply">데모로 시작</button>
+              </div>
+              <div class="err" id="authErr"></div>
+            </div>
+          </div>
+          <div id="currentChatModelBanner" class="current-model-banner" aria-live="polite">
+            <span class="cm-label">현재 사용 중인 모델 · LLM 공급사</span>
+            <span id="currentChatModelText">불러오는 중…</span>
+          </div>
+          <div class="sb-section-title" style="margin-top:0.25rem;">API 키</div>
+          <div id="userApiKeyStatus" style="font-size:0.85rem;margin-bottom:0.55rem;line-height:1.45;color:var(--muted);">
+            로그인 후 표시됩니다.
+          </div>
+          <details id="userLlmKeyDetails" style="margin:0 0 1rem;border:1px solid var(--border);border-radius:10px;padding:0.55rem 0.75rem;">
+            <summary style="cursor:pointer;font-weight:600;font-size:0.88rem;">API 키 입력·변경</summary>
+            <p style="font-size:0.75rem;color:var(--muted);margin:0.45rem 0 0.5rem;line-height:1.4;">
+              서버에 암호화 저장됩니다. <b>입력한 항목만</b> 갱신되며, 비운 채로 저장하면 해당 제공자 키는 요청에 포함되지 않습니다.
+            </p>
+            <label>OpenAI</label>
+            <input type="password" id="userKeyOpenai" autocomplete="off" placeholder="sk-…" />
+            <label>Anthropic</label>
+            <input type="password" id="userKeyAnthropic" autocomplete="off" placeholder="선택" />
+            <label>Google (Gemini)</label>
+            <input type="password" id="userKeyGoogle" autocomplete="off" placeholder="선택" />
+            <button type="button" class="btn btn-primary" id="btnSaveKeysUser">키 저장</button>
+          </details>
+          <p id="modelKeyHint" style="color:var(--muted);font-size:0.85rem;margin:0 0 0.75rem;">
+            아래 목록은 <b>저장된 API 키</b>(또는 서버에 설정된 OpenAI 키)에 맞게 표시됩니다. 키 변경 후 「모델 설정 불러오기」로 갱신하세요.
+          </p>
+          <label>채팅·기본 응답 모델</label>
+          <select id="modelChatSelect" style="width:100%;margin-top:0.2rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
+
+          <details style="margin:0.85rem 0;border:1px solid var(--border);border-radius:10px;padding:0.55rem 0.75rem;">
+            <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;">작업별 모델 (선택)</summary>
+            <p style="color:var(--muted);font-size:0.8rem;margin:0.45rem 0 0.5rem;">비워 두면 위 기본 모델을 사용합니다.</p>
+            <label>보고서 (report)</label>
+            <select id="modelTask_report" class="model-task-select" style="width:100%;margin-top:0.2rem;margin-bottom:0.45rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
+            <label>공문 (memo)</label>
+            <select id="modelTask_memo" class="model-task-select" style="width:100%;margin-top:0.2rem;margin-bottom:0.45rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
+            <label>설명자료 (explanation)</label>
+            <select id="modelTask_explanation" class="model-task-select" style="width:100%;margin-top:0.2rem;margin-bottom:0.45rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
+            <label>의회 답변 (council)</label>
+            <select id="modelTask_council" class="model-task-select" style="width:100%;margin-top:0.2rem;margin-bottom:0.45rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
+            <label>시뮬레이션 (simulation)</label>
+            <select id="modelTask_simulation" class="model-task-select" style="width:100%;margin-top:0.2rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
+          </details>
+
+          <button type="button" class="btn btn-primary btn-sm" id="btnSaveModels">모델 설정 저장</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="btnLoadModels">모델 설정 불러오기</button>
+          <hr style="border-color:var(--border);margin:1rem 0;" />
+          <div class="sb-section-title">데이터 초기화</div>
+          <p style="font-size:0.78rem;color:var(--muted);margin:0 0 0.35rem;line-height:1.45;">
+            항목별로 되돌릴 수 없습니다. 필요한 것만 누르세요. <b>채팅</b>은 대화 세션 전체 삭제, <b>질문목록</b>은 세션은 두고 메시지만 비웁니다.
+          </p>
+          <div class="data-reset-grid" id="dataResetGrid"></div>
+          <p id="dataResetOut" style="font-size:0.78rem;color:var(--muted);margin:0.35rem 0 0;"></p>
+          <hr style="border-color:var(--border);margin:1rem 0;" />
+          <pre id="userJson" style="font-size:0.85rem;color:var(--muted);"></pre>
+          <button type="button" class="btn btn-secondary btn-sm" id="btnLoadAudit">감사 로그</button>
+          <pre id="auditOut" style="margin-top:0.5rem;font-size:0.75rem;color:var(--muted);max-height:200px;overflow:auto;"></pre>
+          <p style="font-size:0.8rem;color:var(--muted);">소스 등록·RAG 검색의 벡터 단계는 OpenAI 키가 있을 때 결합됩니다.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="rtBackdrop" class="rt-backdrop" aria-hidden="true">
+    <div class="rt-dialog" role="dialog" aria-modal="true" aria-labelledby="rtTitle" onclick="event.stopPropagation()" style="max-width:460px;">
+      <h3 id="rtTitle" class="rt-title">역할 설정</h3>
+      <p class="rt-hint">아래 네 가지 중 <b>하나만</b> 선택한 뒤 <b>저장</b>합니다. 채팅에서 <b>대화 모드</b>를 켠 뒤에는 툴바의 역할 버튼으로 바꿀 수 있고, 버튼을 <b>오른쪽 클릭</b>하면 페르소나를 편집할 수 있습니다. <b>사용자 설정</b>을 고르면 페르소나 설명을 입력하고 저장해야 합니다.</p>
+      <div class="rt-role-group" role="radiogroup" aria-label="역할 (하나만 선택)">
+        <button type="button" class="rt-role-btn selected" data-rt-role="supervisor" role="radio" aria-checked="true">상급자</button>
+        <button type="button" class="rt-role-btn" data-rt-role="councilor" role="radio" aria-checked="false">시의원</button>
+        <button type="button" class="rt-role-btn" data-rt-role="citizen" role="radio" aria-checked="false">시민</button>
+        <button type="button" class="rt-role-btn" data-rt-role="custom" role="radio" aria-checked="false">사용자 설정</button>
+      </div>
+      <div id="rtUserPersonaWrap" class="rt-user-persona-wrap" hidden>
+        <label for="rtUserPersonaInline">페르소나 설명 (검토자가 따를 인물·상황)</label>
+        <textarea id="rtUserPersonaInline" placeholder="예: 임금 안 주려고 하는 악덕 사장, 예산을 깐깐히 보는 감사 담당…"></textarea>
+      </div>
+      <div class="rt-actions">
+        <button type="button" class="btn btn-secondary" id="rtCancel">취소</button>
+        <button type="button" class="btn btn-primary" id="rtRun">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="personaEditBackdrop" class="rt-backdrop" aria-hidden="true">
+    <div class="rt-dialog" role="dialog" aria-modal="true" aria-labelledby="personaEditTitle" onclick="event.stopPropagation()">
+      <h3 id="personaEditTitle" class="rt-title">페르소나 편집</h3>
+      <p class="rt-hint" id="personaEditHint">역할별 시스템 프롬프트입니다. 비우고 저장하면 기본 문구로 돌아갑니다.</p>
+      <textarea id="personaEditText" rows="10" style="width:100%;margin-top:0.35rem;min-height:160px;box-sizing:border-box;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);padding:0.5rem;font-size:0.85rem;"></textarea>
+      <div class="rt-actions">
+        <button type="button" class="btn btn-secondary" id="personaEditCancel">취소</button>
+        <button type="button" class="btn btn-primary" id="personaEditSave">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ragDocTitleBackdrop" class="rt-backdrop" aria-hidden="true">
+    <div
+      class="rt-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ragDocTitleHeading"
+      onclick="event.stopPropagation()"
+      style="max-width:420px;"
+    >
+      <h3 id="ragDocTitleHeading" class="rt-title">소스 제목 수정</h3>
+      <p class="rt-hint">목록에 보이는 이름만 바뀝니다. 본문 청크 내용은 그대로입니다.</p>
+      <input
+        type="text"
+        id="ragDocTitleInput"
+        maxlength="512"
+        style="width:100%;box-sizing:border-box;padding:0.5rem 0.55rem;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.9rem;"
+      />
+      <div class="rt-actions">
+        <button type="button" class="btn btn-secondary" id="ragDocTitleCancel">취소</button>
+        <button type="button" class="btn btn-primary" id="ragDocTitleSave">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
+    import { marked } from 'https://esm.sh/marked@15.0.6';
+    import DOMPurify from 'https://esm.sh/dompurify@3.2.2';
+
+    let supabase = null;
+    let accessToken = null;
+    let demoUser = localStorage.getItem('demo_user_id') || '';
+    let currentStreamId = null;
+    let lastTopicId = null;
+    /** loadMessages 후 이 메시지(유저) 말풍선으로 스크롤 — 내 질문에서 이동 시 */
+    let scrollToMessageIdAfterLoad = null;
+    let publicCfg = { supabase_url: '', supabase_anon_key: '', demo_user_header_allowed: false, jwt_verification_relaxed: false };
+    const STORAGE_APP_MARK_LAUNCHED = 'app_mark_launched_v2';
+    const STORAGE_THEME = 'app_theme';
+
+    let reviewReporterBrief = '';
+    let reviewSessionPrimed = false;
+    let lastReviewerOpinion = '';
+    /** 보고자 답변 API에 넘겨 반복 완화(최근 5턴, 이번 생성 전까지). */
+    let reporterReplyHistory = [];
+    /** 검토자 의견 전체(패널에 표시된 순, 최대 5) — DB에 없어 클라이언트가 유지. */
+    let reviewerOpinionHistory = [];
+    /** 검토·보고서 양식 파일(선택, HWP/HWPX/DOC/DOCX). */
+    let reportTemplateFile = null;
+
+    const REVIEW_ROLE_CATALOG = {
+      supervisor: [
+        '상급자 · 행정 책임',
+        '시청 내부 관점: 예산·집행·책임, 규정·리스크, 실무 타당성을 중심으로 짧게 발언한다.',
+      ],
+      councilor: [
+        '시의원 · 의정',
+        '의회·주민 대표 관점: 감시·견제, 정책 쟁점, 예산·조례와의 관계를 중심으로 발언한다.',
+      ],
+      citizen: [
+        '시민 · 이용자',
+        '일반 시민 관점: 알기 쉬운 말, 불편·권리·서비스 이용, 기대를 중심으로 발언한다.',
+      ],
+    };
+
+    function defaultReviewPersonaText(roleId) {
+      const row = REVIEW_ROLE_CATALOG[roleId];
+      if (!row) return '';
+      const [title, hint] = row;
+      // 서버 app.services.review_chat.build_review_system_prompt 와 동일한 본문 (오버라이드 미사용 시와 일치)
+      return (
+        `너는 ${title} 역할을 수행하는 검토자다.\n${hint}\n` +
+        '한국어로만 답한다. 주어진 **보고 내용** 또는 **최근 질의·답변**을 근거로 ' +
+        '검토 의견·질문·보완점을 5문단 이내로 제시한다. 과장·허위 사실은 금지다.'
+      );
+    }
+
+    function personaStorageKey(roleId) {
+      return 'chat_review_persona_' + roleId;
+    }
+
+    function getReviewPersonaOverride(roleId) {
+      try {
+        const v = localStorage.getItem(personaStorageKey(roleId));
+        if (v == null) return null;
+        const t = v.trim();
+        return t.length ? t : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function setReviewPersonaOverride(roleId, text) {
+      const k = personaStorageKey(roleId);
+      const t = (text || '').trim();
+      if (!t) localStorage.removeItem(k);
+      else localStorage.setItem(k, t);
+    }
+
+    const STORAGE_REVIEW_USER_PERSONA = 'chat_review_user_persona_descriptor';
+    function getUserDefinedReviewPersonaDescriptor() {
+      try {
+        const t = (localStorage.getItem(STORAGE_REVIEW_USER_PERSONA) || '').trim();
+        return t.length ? t : null;
+      } catch (_) {
+        return null;
+      }
+    }
+    function setUserDefinedReviewPersonaDescriptor(text) {
+      const t = (text || '').trim();
+      try {
+        if (!t) localStorage.removeItem(STORAGE_REVIEW_USER_PERSONA);
+        else localStorage.setItem(STORAGE_REVIEW_USER_PERSONA, t.slice(0, 2000));
+      } catch (_) {}
+    }
+    function buildSystemPromptFromUserPersonaDescriptor(descriptor) {
+      const d = (descriptor || '').trim();
+      if (!d) return null;
+      return (
+        '너는 시뮬레이션·검토 상황에서 다음 페르소나로 행동하는 검토자다.\n\n' +
+        '【페르소나】\n' +
+        d +
+        '\n\n' +
+        '한국어로만 답한다. 주어진 보고·대화·질의를 읽고, 이 페르소나의 관점·말투·가치관에 맞게 ' +
+        '검토 의견·질문·답변을 제시한다. 과장·허위 사실은 금지하고, 실제 법적·행정 효력을 가진 공문이 아님을 염두에 둔다.'
+      );
+    }
+    /** 역할이 custom이면 사용자 페르소나 프롬프트, 아니면 해당 역할 편집 프롬프트. */
+    function resolveReviewSystemPromptOverride(roleId) {
+      if (roleId === 'custom') {
+        const d = getUserDefinedReviewPersonaDescriptor();
+        return d ? buildSystemPromptFromUserPersonaDescriptor(d) : null;
+      }
+      return getReviewPersonaOverride(roleId);
+    }
+
+    function apiRoleIdForReview(roleId) {
+      return roleId === 'custom' ? 'supervisor' : roleId;
+    }
+
+    function reviewerBannerLabelForRole(roleId) {
+      if (roleId === 'custom') {
+        const d = getUserDefinedReviewPersonaDescriptor();
+        if (d) return d.length > 16 ? d.slice(0, 16) + '…' : d;
+        return '사용자';
+      }
+      return { supervisor: '상급자', councilor: '시의원', citizen: '시민' }[roleId] || roleId;
+    }
+
+    function refreshToolbarCustomRoleLabel() {
+      const el = document.getElementById('reviewRoleToolbarCustom');
+      if (!el) return;
+      const d = getUserDefinedReviewPersonaDescriptor();
+      if (d) {
+        el.textContent = d.length > 10 ? d.slice(0, 10) + '…' : d;
+        el.title = '사용자 페르소나: ' + d;
+      } else {
+        el.textContent = '사용자';
+        el.title = '오른쪽 클릭으로 사용자 페르소나를 지정하세요';
+      }
+    }
+
+    const STORAGE_REVIEW_ROLE_CHOICE = 'chat_review_role_choice';
+    function isValidSavedReviewRole(v) {
+      return v === 'custom' || !!REVIEW_ROLE_CATALOG[v];
+    }
+    function getSavedReviewRoleId() {
+      try {
+        const v = localStorage.getItem(STORAGE_REVIEW_ROLE_CHOICE);
+        if (v === 'custom') {
+          return getUserDefinedReviewPersonaDescriptor() ? 'custom' : 'supervisor';
+        }
+        if (v && REVIEW_ROLE_CATALOG[v]) return v;
+      } catch (_) {}
+      return 'supervisor';
+    }
+    function setSavedReviewRoleId(roleId) {
+      let id = roleId;
+      if (id === 'custom' && !getUserDefinedReviewPersonaDescriptor()) id = 'supervisor';
+      if (!isValidSavedReviewRole(id)) id = 'supervisor';
+      try {
+        localStorage.setItem(STORAGE_REVIEW_ROLE_CHOICE, id);
+      } catch (_) {}
+    }
+    function syncRtUserPersonaWrapVisibility() {
+      const wrap = document.getElementById('rtUserPersonaWrap');
+      const sel = document.querySelector('.rt-role-btn.selected');
+      if (!wrap) return;
+      const show = sel && sel.dataset.rtRole === 'custom';
+      wrap.hidden = !show;
+    }
+    function applyReviewRoleUi(roleId) {
+      let id = roleId;
+      if (id === 'custom' && !getUserDefinedReviewPersonaDescriptor()) id = 'supervisor';
+      if (!isValidSavedReviewRole(id)) id = 'supervisor';
+      document.querySelectorAll('.rt-role-btn').forEach(b => {
+        const on = b.dataset.rtRole === id;
+        b.classList.toggle('selected', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+      document.querySelectorAll('#composerReviewRoleGroup .review-role-btn').forEach(b => {
+        const on = b.dataset.role === id;
+        b.classList.toggle('selected', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+      refreshToolbarCustomRoleLabel();
+    }
+
+    /** 툴바 선택 우선, custom+설명 없으면 supervisor로 정규화(요청 payload와 배너 표시 일치). */
+    function getActiveReviewRoleId() {
+      const roleBtn = document.querySelector('#composerReviewRoleGroup .review-role-btn.selected');
+      let roleId = roleBtn && roleBtn.dataset.role ? roleBtn.dataset.role : getSavedReviewRoleId();
+      if (roleId === 'custom' && !getUserDefinedReviewPersonaDescriptor()) roleId = 'supervisor';
+      if (!isValidSavedReviewRole(roleId)) roleId = 'supervisor';
+      return roleId;
+    }
+
+    function isLegalOn() {
+      const el = document.getElementById('legalToggle');
+      return !!(el && el.classList.contains('on'));
+    }
+
+    function setLegalOn(on) {
+      const el = document.getElementById('legalToggle');
+      if (!el) return;
+      el.classList.toggle('on', !!on);
+      el.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+
+    let lastReviewComposeJson = null;
+    let lastReviewCopyMarkdown = '';
+
+    async function copyTextToClipboard(text) {
+      const t = text == null ? '' : String(text);
+      try {
+        await navigator.clipboard.writeText(t);
+        appLog('클립보드에 복사했습니다.');
+      } catch (_e) {
+        appLog('복사에 실패했습니다. 브라우저 클립보드 권한을 확인하세요.');
+      }
+    }
+
+    function appendBubbleCopyRow(bubbleDiv, plainText) {
+      if (!bubbleDiv) return;
+      const row = document.createElement('div');
+      row.className = 'bubble-copy-row';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'bubble-copy-btn';
+      btn.textContent = '복사';
+      btn.title = '이 답변을 클립보드에 복사';
+      btn.onclick = () => copyTextToClipboard(plainText);
+      row.appendChild(btn);
+      bubbleDiv.appendChild(row);
+    }
+
+    function getReviewerLogFlow() {
+      return document.getElementById('reviewerLogFlow');
+    }
+
+    function clearReviewerLog() {
+      const f = getReviewerLogFlow();
+      if (f) f.innerHTML = '';
+    }
+
+    function appendReviewerBubble(text, roleId, isError) {
+      const log = getReviewerLogFlow();
+      if (!log) return;
+      const label = reviewerBannerLabelForRole(roleId);
+      const d = document.createElement('div');
+      d.className = 'bubble assistant' + (isError ? ' system' : '');
+      const banner = document.createElement('div');
+      banner.className = 'roundtable-banner';
+      banner.textContent = '대화 모드 · ' + label;
+      const body = document.createElement('div');
+      if (isError) {
+        body.className = 'bubble-body';
+        body.textContent = text;
+      } else {
+        setBubbleMarkdown(body, text);
+        lastReviewerOpinion = text || '';
+        const rt = (text || '').trim();
+        if (rt) {
+          reviewerOpinionHistory.push(rt);
+          while (reviewerOpinionHistory.length > 5) reviewerOpinionHistory.shift();
+        }
+      }
+      d.appendChild(banner);
+      d.appendChild(body);
+      appendBubbleCopyRow(d, text || '');
+      log.appendChild(d);
+      const host = document.getElementById('reviewerLog');
+      const scrollEnd = () => {
+        if (host) host.scrollTop = host.scrollHeight;
+      };
+      scrollEnd();
+      requestAnimationFrame(() => requestAnimationFrame(scrollEnd));
+    }
+
+    function appendReporterBubble(bannerText, text) {
+      const log = getChatLogFlow();
+      if (!log) return;
+      const d = document.createElement('div');
+      d.className = 'bubble assistant reporter-bubble';
+      const banner = document.createElement('div');
+      banner.className = 'roundtable-banner';
+      banner.textContent = bannerText || '보고';
+      const body = document.createElement('div');
+      setBubbleMarkdown(body, text);
+      if (bannerText === '보고자 답변') {
+        const t = (text || '').trim();
+        if (t) {
+          reporterReplyHistory.push(t);
+          while (reporterReplyHistory.length > 5) reporterReplyHistory.shift();
+        }
+      }
+      d.appendChild(banner);
+      d.appendChild(body);
+      appendBubbleCopyRow(d, text || '');
+      log.appendChild(d);
+      refreshComposerMode();
+      const scrollHost = document.getElementById('chatLog');
+      const scrollEnd = () => {
+        if (scrollHost) scrollHost.scrollTop = scrollHost.scrollHeight;
+      };
+      scrollEnd();
+      requestAnimationFrame(() => requestAnimationFrame(scrollEnd));
+    }
+
+    async function runReviewTurnAfterAssistant() {
+      const main = document.getElementById('chatMain');
+      if (
+        !main ||
+        !main.classList.contains('review-split') ||
+        !currentStreamId ||
+        !reviewSessionPrimed ||
+        !(reviewReporterBrief || '').trim()
+      ) {
+        return;
+      }
+      const roleId = getActiveReviewRoleId();
+      const override = resolveReviewSystemPromptOverride(roleId);
+      const pend = insertReplyPendingBlock({
+        target: 'reviewer',
+        statusLabel: '검토자: 답변을 생성중입니다',
+        doneLabel: '검토자 답변 생성 완료',
+      });
+      try {
+        const res = await api('/api/v1/streams/auth/' + currentStreamId + '/review-turn', {
+          method: 'POST',
+          body: JSON.stringify({
+            role_id: apiRoleIdForReview(roleId),
+            system_prompt_override: override,
+            reporter_brief: reviewReporterBrief,
+          }),
+        });
+        appendReviewerBubble(res.answer, roleId, false);
+        finalizePendingSuccess(pend);
+      } catch (e) {
+        appendReviewerBubble('검토 호출 실패: ' + e.message, roleId, true);
+        finalizePendingError(pend, e.message);
+      }
+    }
+
+    let personaEditRoleId = null;
+
+    function openPersonaEditor(roleId) {
+      if (roleId === 'custom') {
+        const ta = document.getElementById('rtUserPersonaInline');
+        const bd = document.getElementById('rtBackdrop');
+        if (ta) ta.value = getUserDefinedReviewPersonaDescriptor() || '';
+        document.querySelectorAll('.rt-role-btn').forEach(b => {
+          const on = b.dataset.rtRole === 'custom';
+          b.classList.toggle('selected', on);
+          b.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+        syncRtUserPersonaWrapVisibility();
+        if (bd) {
+          bd.classList.add('rt-open');
+          bd.setAttribute('aria-hidden', 'false');
+        }
+        return;
+      }
+      personaEditRoleId = roleId;
+      const bd = document.getElementById('personaEditBackdrop');
+      const ta = document.getElementById('personaEditText');
+      const hint = document.getElementById('personaEditHint');
+      const title = document.getElementById('personaEditTitle');
+      if (!bd || !ta) return;
+      const stored = getReviewPersonaOverride(roleId);
+      ta.value = stored != null ? stored : defaultReviewPersonaText(roleId);
+      const ko = { supervisor: '상급자', councilor: '시의원', citizen: '시민' }[roleId] || roleId;
+      if (title) title.textContent = '페르소나 · ' + ko;
+      if (hint)
+        hint.textContent =
+          ko +
+          ' 역할의 시스템 프롬프트입니다. 오른쪽 클릭으로 다시 열 수 있습니다. 비우고 저장하면 서버 기본 문구를 씁니다. 검토 역할이 「사용자 설정」일 때는 역할 설정의 페르소나 설명이 쓰입니다.';
+      bd.classList.add('rt-open');
+      bd.setAttribute('aria-hidden', 'false');
+    }
+
+    function closePersonaEditor() {
+      personaEditRoleId = null;
+      const bd = document.getElementById('personaEditBackdrop');
+      if (bd) {
+        bd.classList.remove('rt-open');
+        bd.setAttribute('aria-hidden', 'true');
+      }
+    }
+
+    function setReviewSplit(on) {
+      const main = document.getElementById('chatMain');
+      const pane = document.getElementById('chatPaneReviewer');
+      const btn = document.getElementById('btnReview');
+      const repRow = document.getElementById('composerReporterReplyRow');
+      const legalEl = document.getElementById('legalToggle');
+      if (main) main.classList.toggle('review-split', !!on);
+      if (pane) {
+        pane.setAttribute('aria-hidden', on ? 'false' : 'true');
+      }
+      if (repRow) repRow.setAttribute('aria-hidden', on ? 'false' : 'true');
+      if (btn) btn.classList.toggle('active', !!on);
+      if (legalEl) {
+        if (on) {
+          setLegalOn(false);
+          legalEl.hidden = true;
+          legalEl.setAttribute('aria-hidden', 'true');
+        } else {
+          legalEl.hidden = false;
+          legalEl.removeAttribute('aria-hidden');
+        }
+      }
+      if (!on) {
+        clearReviewerLog();
+        reviewReporterBrief = '';
+        reviewSessionPrimed = false;
+        lastReviewerOpinion = '';
+        reporterReplyHistory = [];
+        reviewerOpinionHistory = [];
+      }
+    }
+
+    function setTheme(mode, persist) {
+      document.documentElement.setAttribute('data-theme', mode);
+      document.documentElement.style.removeProperty('--accent');
+      if (persist) localStorage.setItem(STORAGE_THEME, mode);
+      ['themeBtnDark', 'themeBtnLight'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.classList.toggle('active', b.dataset.themeSet === mode);
+      });
+    }
+
+    function loadThemeFromStorage() {
+      let mode = localStorage.getItem(STORAGE_THEME) || 'dark';
+      if (mode === 'color') mode = 'dark';
+      setTheme(mode, false);
+    }
+
+    const PROMPT_TOPIC_BUCKETS = [
+      { id: 'all', label: '전체' },
+      { id: 'legal', label: '법령·행정' },
+      { id: 'doc', label: '문서·안건' },
+      { id: 'data', label: '데이터·시스템' },
+      { id: 'general', label: '일반·기타' },
+    ];
+    let myPromptRowsCache = null;
+    let selectedPromptTopicBucket = 'all';
+    let selectedMidTopicKey = null;
+    let currentMidTopicGroups = [];
+    const MID_TOPIC_MAX = 5;
+
+    function normalizeAssistantMarkdownRaw(text) {
+      if (text == null || typeof text !== 'string') return '';
+      return text
+        .replace(/\r\n/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/[ \t]+$/gm, '')
+        .trim();
+    }
+
+    function compactMarkdownHtml(html) {
+      if (!html || typeof html !== 'string') return html;
+      return html
+        .replace(/<p>\s*(<br\s*\/?>\s*)+<\/p>/gi, '')
+        .replace(/(<br\s*\/?>\s*){3,}/gi, '<br /><br />')
+        .replace(/<\/p>\s*<p>\s*<\/p>/gi, '</p>');
+    }
+
+    function renderChatMarkdown(text) {
+      try {
+        const raw = normalizeAssistantMarkdownRaw(String(text || ''));
+        const parsed = marked.parse(raw, { breaks: false, gfm: true });
+        return DOMPurify.sanitize(compactMarkdownHtml(parsed), { USE_PROFILES: { html: true } });
+      } catch (_) {
+        return DOMPurify.sanitize(String(text || ''));
+      }
+    }
+
+    function setReviewOutGenerating() {
+      const el = document.getElementById('reviewOut');
+      if (!el) return;
+      el.removeAttribute('style');
+      el.className = 'bubble-body';
+      el.style.color = 'var(--muted)';
+      el.style.fontSize = '0.9rem';
+      el.textContent = '생성 중입니다…';
+      const act = document.getElementById('reviewOutActions');
+      if (act) act.hidden = true;
+      lastReviewComposeJson = null;
+      lastReviewCopyMarkdown = '';
+    }
+
+    function setReviewComposeButtonsDisabled(disabled) {
+      document.querySelectorAll('#view-review .review-compose-btn').forEach(b => {
+        b.disabled = !!disabled;
+      });
+    }
+
+    /** 에이전트 JSON → 화면용 마크다운(구간 사이 빈 줄 3칸 분량) */
+    function buildReviewAgentMarkdown(r) {
+      if (!r || typeof r !== 'object') return '';
+      const gap = '\n\n\n\n';
+      if (
+        typeof r.writer === 'string' &&
+        typeof r.reviewer === 'string' &&
+        typeof r.legal_checker === 'string'
+      ) {
+        return (
+          '## 작성(보강)\n\n' +
+          (r.writer || '').trim() +
+          gap +
+          '## 상급자 검토\n\n' +
+          (r.reviewer || '').trim() +
+          gap +
+          '## 법령 점검\n\n' +
+          (r.legal_checker || '').trim()
+        );
+      }
+      if (typeof r.simulation === 'string' && typeof r.legal_checker === 'string' && r.writer === undefined) {
+        return (
+          '## 의회 질의 시뮬레이션\n\n' +
+          (r.simulation || '').trim() +
+          gap +
+          '## 법령 점검\n\n' +
+          (r.legal_checker || '').trim()
+        );
+      }
+      if (typeof r.text === 'string') return (r.text || '').trim() || '(내용 없음)';
+      return '```json\n' + JSON.stringify(r, null, 2) + '\n```';
+    }
+
+    /** Word 다운로드 본문: 양식 반영 시 작성(보강) 단계 텍스트 우선 */
+    function docxBodyFromComposeResponse(r) {
+      if (!r || typeof r !== 'object') return '';
+      if (r.template_applied) {
+        if (typeof r.writer === 'string' && r.writer.trim()) return r.writer.trim();
+        if (typeof r.text === 'string' && r.text.trim()) return r.text.trim();
+      }
+      return buildReviewAgentMarkdown(r);
+    }
+
+    /** 검토·문서 초안 / 에이전트 응답을 채팅과 동일한 마크다운 말풍선으로 표시 */
+    function fillReviewAgentOutput(r) {
+      const el = document.getElementById('reviewOut');
+      if (!el) return;
+      el.removeAttribute('style');
+      lastReviewComposeJson = r && typeof r === 'object' ? r : null;
+      const md = buildReviewAgentMarkdown(r);
+      lastReviewCopyMarkdown = md;
+      setBubbleMarkdown(el, md);
+      const act = document.getElementById('reviewOutActions');
+      const btnDocx = document.getElementById('btnReviewOutDocx');
+      if (act) act.hidden = false;
+      if (btnDocx) btnDocx.hidden = !(r && r.template_applied);
+    }
+
+    function setBubbleMarkdown(bodyEl, text) {
+      if (!bodyEl) return;
+      bodyEl.classList.add('bubble-body', 'bubble-body-md');
+      bodyEl.innerHTML = renderChatMarkdown(text);
+    }
+
+    function broadPromptCategory(row) {
+      const text = ((row.preview || '') + ' ' + (row.stream_title || '')).trim();
+      if (/법령|조례|행정절차|허가|민원|소송|규정|고시|지자체|시청|군수|법률|공무원|공공기관|공무|행정처분/i.test(text)) return 'legal';
+      if (/보고서|공문|안건|회의|의회|결재|기안|문서|품의|보고/i.test(text)) return 'doc';
+      if (/엑셀|통계|자료|데이터|csv|api|시스템|프로그램|소프트웨어|디지털/i.test(text)) return 'data';
+      return 'general';
+    }
+
+    function buildPromptItemDiv(r) {
+      const div = document.createElement('div');
+      div.className = 'session-item prompt-item';
+      const left = document.createElement('div');
+      left.className = 'prompt-item-col';
+      const prev = document.createElement('div');
+      prev.className = 'prompt-item-preview';
+      prev.textContent = r.preview || '(내용 없음)';
+      const sub = document.createElement('div');
+      sub.className = 'prompt-item-meta';
+      let dt = '';
+      try {
+        if (r.created_at) dt = new Date(r.created_at).toLocaleString();
+      } catch (_e) {}
+      const cat = PROMPT_TOPIC_BUCKETS.find(b => b.id === broadPromptCategory(r));
+      sub.textContent =
+        (cat ? cat.label + ' · ' : '') + (r.stream_title || '채팅') + (dt ? ' · ' + dt : '');
+      left.appendChild(prev);
+      left.appendChild(sub);
+      const go = document.createElement('span');
+      go.style.cssText = 'color:var(--muted);font-size:0.75rem;flex-shrink:0;margin-top:0.15rem;';
+      go.textContent = '채팅';
+      div.appendChild(left);
+      div.appendChild(go);
+      div.onclick = async () => {
+        currentStreamId = r.stream_id;
+        scrollToMessageIdAfterLoad = r.message_id;
+        await refreshSessionList();
+        await loadMessages();
+        setView('chat');
+      };
+      return div;
+    }
+
+    function getBroadFilteredRows() {
+      const rows = myPromptRowsCache || [];
+      if (selectedPromptTopicBucket === 'all') return rows.slice();
+      return rows.filter(row => broadPromptCategory(row) === selectedPromptTopicBucket);
+    }
+
+    function buildMidTopicGroups(rows) {
+      if (!rows || !rows.length) return [];
+      const byStream = new Map();
+      for (const r of rows) {
+        const sid = r.stream_id || 'unknown';
+        if (!byStream.has(sid)) {
+          let lab = (r.stream_title || '제목 없는 대화').trim() || '채팅';
+          if (lab.length > 36) lab = lab.slice(0, 33) + '…';
+          byStream.set(sid, { key: 's:' + sid, label: lab, rows: [] });
+        }
+        byStream.get(sid).rows.push(r);
+      }
+      let groups = [...byStream.values()];
+      while (groups.length > MID_TOPIC_MAX) {
+        groups.sort((a, b) => a.rows.length - b.rows.length);
+        const a = groups.shift();
+        const b = groups.shift();
+        const mergedRows = [...a.rows, ...b.rows];
+        const sk = [String(a.key), String(b.key)].sort().join('|');
+        groups.push({
+          key: 'm:' + sk,
+          label: '통합 · ' + mergedRows.length + '개 질문',
+          rows: mergedRows,
+        });
+      }
+      if (groups.length === 1 && groups[0].rows.length > 10) {
+        const one = groups[0];
+        const r = one.rows.slice().sort((x, y) => {
+          const ax = x.created_at ? new Date(x.created_at).getTime() : 0;
+          const ay = y.created_at ? new Date(y.created_at).getTime() : 0;
+          return ax - ay;
+        });
+        const k = Math.min(MID_TOPIC_MAX, Math.max(2, Math.ceil(r.length / 6)));
+        const chunk = Math.ceil(r.length / k);
+        const split = [];
+        for (let i = 0; i < k; i++) {
+          const slice = r.slice(i * chunk, (i + 1) * chunk);
+          const t0 = slice[0]?.created_at;
+          const t1 = slice[slice.length - 1]?.created_at;
+          let lab = '구간 ' + (i + 1) + ' · ' + slice.length + '개';
+          try {
+            if (t0 && t1) {
+              const d0 = new Date(t0).toLocaleDateString();
+              const d1 = new Date(t1).toLocaleDateString();
+              lab = (d0 === d1 ? d0 : d0 + '–' + d1) + ' · ' + slice.length + '개';
+            }
+          } catch (_e) {}
+          const base = String(one.key).replace(/[^a-zA-Z0-9:-]/g, '').slice(0, 24) || 'g';
+          split.push({
+            key: 't:' + base + ':' + i + ':' + (slice[0]?.message_id || i),
+            label: lab,
+            rows: slice,
+          });
+        }
+        return split;
+      }
+      return groups;
+    }
+
+    function renderTopicBucketBar() {
+      const bar = document.getElementById('topicBucketBar');
+      if (!bar) return;
+      const rows = myPromptRowsCache || [];
+      bar.innerHTML = '';
+      PROMPT_TOPIC_BUCKETS.forEach(b => {
+        const cnt = b.id === 'all' ? rows.length : rows.filter(row => broadPromptCategory(row) === b.id).length;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'topic-bucket-btn' + (selectedPromptTopicBucket === b.id ? ' active' : '');
+        btn.textContent = b.label + ' · ' + cnt;
+        btn.onclick = () => {
+          selectedPromptTopicBucket = b.id;
+          selectedMidTopicKey = null;
+          renderTopicBucketBar();
+          renderMidTopicBar();
+          renderTopicPromptListBody();
+        };
+        bar.appendChild(btn);
+      });
+    }
+
+    function renderMidTopicBar() {
+      const bar = document.getElementById('midTopicBucketBar');
+      if (!bar) return;
+      const broadFiltered = getBroadFilteredRows();
+      currentMidTopicGroups = buildMidTopicGroups(broadFiltered);
+      if (selectedMidTopicKey != null && !currentMidTopicGroups.some(g => g.key === selectedMidTopicKey)) {
+        selectedMidTopicKey = null;
+      }
+      bar.innerHTML = '';
+      const allBtn = document.createElement('button');
+      allBtn.type = 'button';
+      allBtn.className = 'topic-bucket-btn' + (selectedMidTopicKey === null ? ' active' : '');
+      allBtn.textContent = '전체 · ' + broadFiltered.length;
+      allBtn.onclick = () => {
+        selectedMidTopicKey = null;
+        renderMidTopicBar();
+        renderTopicPromptListBody();
+      };
+      bar.appendChild(allBtn);
+      currentMidTopicGroups.forEach(g => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'topic-bucket-btn' + (selectedMidTopicKey === g.key ? ' active' : '');
+        btn.textContent = g.label + ' · ' + g.rows.length;
+        btn.onclick = () => {
+          selectedMidTopicKey = g.key;
+          renderMidTopicBar();
+          renderTopicPromptListBody();
+        };
+        bar.appendChild(btn);
+      });
+    }
+
+    function renderTopicPromptListBody() {
+      const box = document.getElementById('topicPromptList');
+      if (!box) return;
+      const rows = myPromptRowsCache || [];
+      const broadFiltered = getBroadFilteredRows();
+      box.innerHTML = '';
+      let showRows = broadFiltered;
+      if (selectedMidTopicKey != null) {
+        const g = currentMidTopicGroups.find(x => x.key === selectedMidTopicKey);
+        if (g) showRows = g.rows;
+      }
+      if (!showRows.length) {
+        box.textContent = rows.length
+          ? broadFiltered.length
+            ? '(이 중분류에 해당하는 질문이 없습니다.)'
+            : '(이 대분류에 해당하는 질문이 없습니다.)'
+          : '(저장된 내 질문이 없습니다.)';
+        return;
+      }
+      showRows.forEach(r => box.appendChild(buildPromptItemDiv(r)));
+    }
+
+    function renderTopicPromptList() {
+      renderMidTopicBar();
+      renderTopicPromptListBody();
+    }
+
+    /** RAG 문서 체크 상태 localStorage 키 접미사용(로그인 user_id). */
+    let _ragUserIdForChecks = '';
+
+    const MODEL_CATALOG = [
+      { provider: 'openai', id: 'gpt-4o-mini', label: 'gpt-4o-mini' },
+      { provider: 'openai', id: 'gpt-4o', label: 'gpt-4o' },
+      { provider: 'openai', id: 'gpt-4-turbo', label: 'gpt-4-turbo' },
+      { provider: 'anthropic', id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+      { provider: 'anthropic', id: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku' },
+      { provider: 'anthropic', id: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+      { provider: 'google', id: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite' },
+      { provider: 'google', id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+      { provider: 'google', id: 'gemini-3-flash-preview', label: 'Gemini 3.0 Flash' },
+      { provider: 'google', id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    ];
+    const MODEL_TASK_MAP = [
+      ['report', 'modelTask_report'],
+      ['memo', 'modelTask_memo'],
+      ['explanation', 'modelTask_explanation'],
+      ['council', 'modelTask_council'],
+      ['simulation', 'modelTask_simulation'],
+    ];
+
+    function providerLabelForModelId(modelId) {
+      const id = String(modelId || '').trim();
+      if (!id) return null;
+      const m = MODEL_CATALOG.find(x => x.id === id);
+      if (!m) return null;
+      const map = { openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google Gemini' };
+      return map[m.provider] || m.provider;
+    }
+
+    function anyModelProvider(p) {
+      return !!(p && (p.openai || p.anthropic || p.google));
+    }
+
+    function appendModelOptionsToSelect(selectEl, providers, includeBaselineEmpty) {
+      selectEl.innerHTML = '';
+      if (includeBaselineEmpty) {
+        const o0 = document.createElement('option');
+        o0.value = '';
+        o0.textContent = '(기본 모델과 동일)';
+        selectEl.appendChild(o0);
+      }
+      if (!anyModelProvider(providers)) {
+        const ox = document.createElement('option');
+        ox.value = '';
+        ox.textContent = 'API 키 없음 — 사이드바에서 등록';
+        ox.disabled = true;
+        selectEl.appendChild(ox);
+        return;
+      }
+      const labels = { openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google Gemini' };
+      for (const prov of ['openai', 'anthropic', 'google']) {
+        if (!providers[prov]) continue;
+        const og = document.createElement('optgroup');
+        og.label = labels[prov];
+        MODEL_CATALOG.filter(m => m.provider === prov).forEach(m => {
+          const o = document.createElement('option');
+          o.value = m.id;
+          o.textContent = m.label;
+          og.appendChild(o);
+        });
+        selectEl.appendChild(og);
+      }
+    }
+
+    function ensureSelectHasValue(selectEl, value) {
+      if (!value) return;
+      const ok = Array.from(selectEl.options).some(o => o.value === value);
+      if (!ok) {
+        const o = document.createElement('option');
+        o.value = value;
+        o.textContent = '저장됨: ' + value;
+        const first = selectEl.options[0];
+        if (first && first.value === '') selectEl.insertBefore(o, first.nextSibling);
+        else if (selectEl.firstChild) selectEl.insertBefore(o, selectEl.firstChild);
+        else selectEl.appendChild(o);
+      }
+      selectEl.value = value;
+    }
+
+    function fillChatModelSelect(providers, current) {
+      const sel = document.getElementById('modelChatSelect');
+      appendModelOptionsToSelect(sel, providers, false);
+      if (!anyModelProvider(providers)) return;
+      const v = (current || '').trim();
+      if (v) ensureSelectHasValue(sel, v);
+      if (v && Array.from(sel.options).some(o => o.value === v)) sel.value = v;
+      else {
+        const firstReal = Array.from(sel.options).find(o => o.value && !o.disabled);
+        if (firstReal) sel.value = firstReal.value;
+      }
+    }
+
+    function fillTaskModelSelect(selectId, providers, current) {
+      const sel = document.getElementById(selectId);
+      appendModelOptionsToSelect(sel, providers, true);
+      if (!anyModelProvider(providers)) return;
+      const v = (current || '').trim();
+      if (v) ensureSelectHasValue(sel, v);
+      sel.value = v || '';
+    }
+
+    function providersHaveAnyKey(p) {
+      return !!(p && (p.openai || p.anthropic || p.google));
+    }
+
+    function refreshSidebarLlmOnboarding(providers, firstBrowserSession) {
+      const wrap = document.getElementById('llm-key-wrap');
+      if (!wrap) return;
+      const hasK = providersHaveAnyKey(providers);
+      const show = !!firstBrowserSession && !hasK;
+      wrap.style.display = show ? '' : 'none';
+    }
+
+    function updateUserApiKeyStatus(p) {
+      const el = document.getElementById('userApiKeyStatus');
+      if (!el) return;
+      const ok = [];
+      if (p.openai) ok.push('OpenAI');
+      if (p.anthropic) ok.push('Anthropic');
+      if (p.google) ok.push('Google');
+      el.innerHTML = ok.length
+        ? '<span style="color:var(--ok);">저장됨</span> · ' + ok.join(', ')
+        : '<span style="color:var(--warn);">저장된 사용자 키 없음</span> · 아래에서 입력하세요. (서버에 OPENAI_API_KEY만 있는 경우 OpenAI는 사용될 수 있습니다.)';
+    }
+
+    async function loadUserModelSettingsPanel() {
+      if (!requireAuth()) return;
+      const s = await api('/api/v1/users/me/settings');
+      const p = s.providers_with_keys || {};
+      const firstMark = localStorage.getItem(STORAGE_APP_MARK_LAUNCHED) !== '1';
+      refreshSidebarLlmOnboarding(p, firstMark);
+      updateUserApiKeyStatus(p);
+      const hint = document.getElementById('modelKeyHint');
+      const bits = [];
+      if (p.openai) bits.push('OpenAI');
+      if (p.anthropic) bits.push('Anthropic');
+      if (p.google) bits.push('Google');
+      hint.textContent = bits.length
+        ? '사용 가능: ' + bits.join(', ') + '. (서버에 OPENAI_API_KEY가 있으면 OpenAI도 사용 가능)'
+        : '저장된 API 키가 없습니다. 위 「API 키 입력·변경」에서 키를 저장하면 모델을 고를 수 있습니다.';
+
+      const tm = s.task_models || {};
+      const chatVal = tm.chat ? tm.chat : (s.default_model || '');
+      fillChatModelSelect(p, chatVal);
+      for (const [key, sid] of MODEL_TASK_MAP) {
+        fillTaskModelSelect(sid, p, tm[key] || '');
+      }
+      updateCurrentChatModelBanner();
+    }
+
+    function updateCurrentChatModelBanner() {
+      const el = document.getElementById('currentChatModelText');
+      const sel = document.getElementById('modelChatSelect');
+      if (!el || !sel) return;
+      const opt = sel.options[sel.selectedIndex];
+      if (!opt || !String(opt.value || '').trim()) {
+        el.textContent =
+          '선택된 모델 없음 — 「API 키 입력·변경」에서 키를 저장한 뒤 「모델 설정 불러오기」를 눌러 주세요.';
+        return;
+      }
+      const mid = opt.value;
+      const prov = providerLabelForModelId(mid);
+      const name = opt.textContent || mid;
+      el.textContent = prov ? prov + ' · ' + name : name;
+    }
+
+    function getSelectedDocIds() {
+      const ids = [];
+      document.querySelectorAll('#docCheckList .rag-doc-row.selected').forEach(row => {
+        if (row.dataset.docId) ids.push(row.dataset.docId);
+      });
+      return ids.length ? ids : null;
+    }
+
+    function ragDocChecksStorageKey() {
+      return 'rag_doc_checks_v1:' + (_ragUserIdForChecks || 'unknown');
+    }
+
+    function loadRagDocChecksSet(idsNow) {
+      const key = ragDocChecksStorageKey();
+      let arr = [];
+      try {
+        arr = JSON.parse(localStorage.getItem(key) || '[]');
+      } catch (_) {
+        arr = [];
+      }
+      if (!Array.isArray(arr)) arr = [];
+      const pruned = arr.filter(id => idsNow.has(id));
+      localStorage.setItem(key, JSON.stringify(pruned));
+      return new Set(pruned);
+    }
+
+    function persistRagDocCheck(docId, checked) {
+      const idsNow = new Set(
+        [...document.querySelectorAll('#docCheckList .rag-doc-row')].map(el => el.dataset.docId).filter(Boolean),
+      );
+      const key = ragDocChecksStorageKey();
+      let arr = [];
+      try {
+        arr = JSON.parse(localStorage.getItem(key) || '[]');
+      } catch (_) {
+        arr = [];
+      }
+      const s = new Set(Array.isArray(arr) ? arr : []);
+      if (checked) s.add(docId);
+      else s.delete(docId);
+      const out = [...s].filter(id => idsNow.has(id));
+      localStorage.setItem(key, JSON.stringify(out));
+    }
+
+    function setRagDocRowVisual(row, selected) {
+      row.classList.toggle('selected', selected);
+      row.classList.toggle('unselected', !selected);
+    }
+
+    function ragDocListAddChecked(docId) {
+      if (!docId) return;
+      const key = ragDocChecksStorageKey();
+      const idsNow = new Set(
+        [...document.querySelectorAll('#docCheckList .rag-doc-row')].map(el => el.dataset.docId).filter(Boolean),
+      );
+      if (!idsNow.has(docId)) return;
+      let arr = [];
+      try {
+        arr = JSON.parse(localStorage.getItem(key) || '[]');
+      } catch (_) {
+        arr = [];
+      }
+      const s = new Set(Array.isArray(arr) ? arr : []);
+      s.add(docId);
+      localStorage.setItem(key, JSON.stringify([...s].filter(id => idsNow.has(id))));
+      const row = document.querySelector('#docCheckList .rag-doc-row[data-doc-id="' + docId + '"]');
+      if (row) setRagDocRowVisual(row, true);
+    }
+
+    const sidebar = document.getElementById('sidebar');
+    const authErr = document.getElementById('authErr');
+
+    document.getElementById('themeBtnDark').onclick = () => setTheme('dark', true);
+    document.getElementById('themeBtnLight').onclick = () => setTheme('light', true);
+
+    async function startNewChatSession() {
+      if (!requireAuth()) return;
+      appLog('새 채팅…');
+      const s = await api('/api/v1/streams/auth', { method: 'POST', body: JSON.stringify({ title: '새 대화' }) });
+      currentStreamId = s.id;
+      const flow = getChatLogFlow();
+      if (flow) flow.innerHTML = '';
+      setReviewSplit(false);
+      refreshComposerMode();
+      appLog('새 채팅 시작');
+      await refreshSessionList({ silent: true });
+      setView('chat');
+    }
+    document.getElementById('btnNewChatComposer').onclick = () => {
+      startNewChatSession().catch(e => appLog('새 채팅 실패: ' + e.message));
+    };
+    document.getElementById('legalToggle').onclick = () => setLegalOn(!isLegalOn());
+
+    function toggleSidebar() {
+      sidebar.classList.toggle('collapsed');
+      localStorage.setItem('sb_collapsed', sidebar.classList.contains('collapsed') ? '1' : '');
+    }
+    document.getElementById('sbToggle').onclick = toggleSidebar;
+    if (localStorage.getItem('sb_collapsed') === '1') sidebar.classList.add('collapsed');
+
+    function setView(name) {
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelectorAll('.nav-btn[data-view]').forEach(b => b.classList.remove('active'));
+      const el = document.getElementById('view-' + name);
+      if (el) el.classList.add('active');
+      const nb = document.querySelector('.nav-btn[data-view="' + name + '"]');
+      if (nb) nb.classList.add('active');
+    }
+    document.querySelectorAll('.nav-btn[data-view]').forEach(b => {
+      b.onclick = () => {
+        setView(b.dataset.view);
+        if (b.dataset.view === 'prompts-topics') loadMyPrompts();
+      };
+    });
+
+    function formatLegalSearchStep(row, idx) {
+      if (!row) return '';
+      let p = '[법령·검색 #' + (idx + 1) + '] lawSearch.do · target=' + (row.target || '?');
+      if (row.query) p += ' · query="' + row.query + '"';
+      if (row.http_status != null) p += ' · HTTP ' + row.http_status;
+      if (row.error) p += ' · 오류:' + row.error;
+      if (row.total_count != null) p += ' · 총건수:' + row.total_count;
+      if (row.hit_titles && row.hit_titles.length)
+        p += ' · 응답명: ' + row.hit_titles.join(' | ');
+      if (row.note) p += ' · ' + row.note;
+      const pr = row.params || {};
+      if (pr.search !== undefined && pr.search !== '') p += ' · search=' + pr.search;
+      if (pr.nw) p += ' · nw=' + pr.nw;
+      if (pr.display) p += ' · display=' + pr.display;
+      if (row.request_url) p += '\n  · 요청URL: ' + row.request_url;
+      return p;
+    }
+    function formatLegalBodyFetch(row, idx) {
+      if (!row) return '';
+      let p = '[법령·본문 #' + (idx + 1) + '] lawService.do · ' + (row.target_label_ko || row.target || '?');
+      p += ' · ID=' + (row.id != null ? row.id : '?');
+      if (row.status != null) p += ' · HTTP ' + row.status;
+      if (row.title) p += ' · 「' + row.title + '」';
+      if (row.JO) p += ' · JO=' + row.JO;
+      if (row.body_plain_len != null) p += ' · 추출평문=' + row.body_plain_len + '자';
+      if (row.preview_note) p += ' · ' + row.preview_note;
+      if (row.raw_http_body_len != null) p += ' · HTTP원문=' + row.raw_http_body_len + '자';
+      if (row.error) p += ' · 오류:' + row.error;
+      if (row.request_url) p += '\n  · 요청URL: ' + row.request_url;
+      return p;
+    }
+
+    /** legal_debug.body_fetches 행의 본문 미리보기(로그 토글에서 전체 확인) */
+    function formatLegalBodyFetchPreviewLines(row) {
+      if (!row) return [];
+      const out = [];
+      if (row.http_response_preview) {
+        let h = String(row.http_response_preview);
+        if (h.length > 4000) h = h.slice(0, 3997) + '…';
+        out.push('  [HTTP 원문 응답]\n' + h);
+      }
+      if (row.body_preview) {
+        let pv = String(row.body_preview);
+        if (pv.length > 4000) pv = pv.slice(0, 3997) + '…';
+        out.push('  [추출 평문 미리보기]\n' + pv);
+      }
+      if (row.raw_http_body_preview) {
+        let r = String(row.raw_http_body_preview);
+        if (r.length > 4000) r = r.slice(0, 3997) + '…';
+        out.push('  [HTTP 응답 일부]\n' + r);
+      }
+      return out;
+    }
+
+    function getChatLogFlow() {
+      return document.getElementById('chatLogFlow') || document.getElementById('chatLog');
+    }
+
+    /** 레이아웃 전환용: 시스템 로그만 있으면 여전히 ‘빈 대화’처럼 중앙 입력 유지 */
+    function getConversationBubbleCount() {
+      return document.querySelectorAll('#chatLogFlow .bubble.user, #chatLogFlow .bubble.assistant').length;
+    }
+    function refreshComposerMode() {
+      const main = document.getElementById('chatMain');
+      if (!main) return;
+      const empty = getConversationBubbleCount() === 0;
+      main.classList.toggle('empty-composer', empty);
+      main.classList.toggle('has-conversation', !empty);
+    }
+    function scrollPendingIntoView(scrollHost) {
+      if (!scrollHost) return;
+      const end = () => {
+        scrollHost.scrollTop = scrollHost.scrollHeight;
+      };
+      end();
+      requestAnimationFrame(() => requestAnimationFrame(end));
+    }
+
+    /**
+     * 질의 말풍선 바로 아래(또는 검토자 로그): 생성 중 문구 + 1줄 로그
+     * options.target: 'user' | 'reviewer' (기본 user)
+     * options.statusLabel: 상단 점 옆 문구
+     * options.doneLabel: 성공 시 한 줄 요약 문구
+     */
+    function insertReplyPendingBlock(options) {
+      const opts = options || {};
+      const target = opts.target === 'reviewer' ? 'reviewer' : 'user';
+      const log = target === 'reviewer' ? getReviewerLogFlow() : getChatLogFlow();
+      const scrollHost =
+        target === 'reviewer' ? document.getElementById('reviewerLog') : document.getElementById('chatLog');
+      if (!log) {
+        return {
+          wrap: null,
+          status: null,
+          oneLine: null,
+          full: null,
+          toggle: null,
+          lines: [],
+          target,
+          doneLabel: null,
+        };
+      }
+
+      const statusLabel =
+        opts.statusLabel && String(opts.statusLabel).trim()
+          ? String(opts.statusLabel).trim()
+          : '답변을 생성중입니다';
+      const doneLabel = opts.doneLabel && String(opts.doneLabel).trim() ? String(opts.doneLabel).trim() : null;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'reply-pending';
+      wrap.setAttribute('role', 'status');
+      wrap.setAttribute('aria-live', 'polite');
+
+      const status = document.createElement('div');
+      status.className = 'reply-pending-status';
+      const dots = document.createElement('div');
+      dots.className = 'reply-pending-dots';
+      dots.setAttribute('aria-hidden', 'true');
+      dots.innerHTML = '<span></span><span></span><span></span>';
+      const stLabel = document.createElement('span');
+      stLabel.textContent = statusLabel;
+      status.appendChild(dots);
+      status.appendChild(stLabel);
+
+      const row = document.createElement('div');
+      row.className = 'reply-pending-log-row';
+      const oneLine = document.createElement('div');
+      oneLine.className = 'reply-log-one-line';
+      oneLine.textContent = '…';
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'reply-log-toggle';
+      toggle.textContent = '로그';
+      toggle.setAttribute('aria-expanded', 'false');
+      row.appendChild(oneLine);
+      row.appendChild(toggle);
+
+      const full = document.createElement('pre');
+      full.className = 'reply-log-full';
+      full.hidden = true;
+
+      wrap.appendChild(status);
+      wrap.appendChild(row);
+      wrap.appendChild(full);
+      log.appendChild(wrap);
+      scrollPendingIntoView(scrollHost);
+
+      const state = {
+        wrap,
+        status,
+        oneLine,
+        full,
+        toggle,
+        lines: [],
+        target,
+        doneLabel,
+      };
+      toggle.onclick = () => {
+        full.hidden = !full.hidden;
+        const open = !full.hidden;
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.textContent = open ? '접기' : '로그';
+      };
+      return state;
+    }
+
+    function pendingLogPush(state, line) {
+      if (!state || !state.oneLine || line == null || line === '') return;
+      const t = new Date().toLocaleTimeString();
+      const fullLine = '[' + t + '] ' + line;
+      state.lines.push(fullLine);
+      state.oneLine.textContent = fullLine;
+      state.oneLine.title = fullLine;
+      if (state.full) state.full.textContent = state.lines.join('\n');
+    }
+
+    function finalizePendingSuccess(state) {
+      if (!state || !state.status || !state.oneLine) return;
+      state.status.setAttribute('hidden', '');
+      let done = state.doneLabel;
+      if (!done) {
+        done =
+          state.target === 'reviewer'
+            ? '검토자 답변 생성 완료'
+            : '답변 생성 완료';
+      }
+      state.oneLine.textContent = done;
+      state.oneLine.title = '';
+      if (state.full) state.full.hidden = true;
+      if (state.toggle) {
+        state.toggle.setAttribute('aria-expanded', 'false');
+        state.toggle.textContent = '로그';
+      }
+    }
+
+    function finalizePendingError(state, errMsg) {
+      if (!state || !state.status || !state.oneLine) return;
+      state.status.setAttribute('hidden', '');
+      const msg = (errMsg || '알 수 없는 오류').slice(0, 200);
+      state.oneLine.textContent = '오류: ' + msg;
+      state.oneLine.title = state.lines.join('\n');
+      if (state.full) {
+        state.full.textContent = state.lines.join('\n');
+        state.full.hidden = true;
+      }
+      if (state.toggle) {
+        state.toggle.setAttribute('aria-expanded', 'false');
+        state.toggle.textContent = '로그';
+      }
+    }
+
+    function scrollChatToMessage(messageId) {
+      const log = document.getElementById('chatLog');
+      if (!log || !messageId) return;
+      const el = log.querySelector('[data-message-id="' + messageId.replace(/"/g, '') + '"]');
+      if (!el) return;
+      el.classList.add('bubble-highlight');
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(() => el.classList.remove('bubble-highlight'), 2200);
+    }
+
+    function parseRoundtableAnswer(text) {
+      const t = text || '';
+      if (t.indexOf('【역할별 토의') === -1) return null;
+      const turns = [];
+      const segments = t.split(/\n── /);
+      for (let i = 1; i < segments.length; i++) {
+        const seg = segments[i];
+        const nl = seg.indexOf('\n');
+        if (nl <= 0) continue;
+        const label = seg.slice(0, nl).replace(/\s*──\s*$/, '').trim();
+        const content = seg.slice(nl + 1).trim();
+        if (label && content) turns.push({ label, content });
+      }
+      return turns.length ? turns : null;
+    }
+
+    function appendAssistantRoundtable(turns, meta, legalExtras, messageId, rawAnswerText) {
+      const log = getChatLogFlow();
+      const d = document.createElement('div');
+      d.className = 'bubble assistant roundtable-host';
+      if (messageId) d.setAttribute('data-message-id', messageId);
+      const wrap = document.createElement('div');
+      wrap.className = 'bubble-body roundtable-wrap';
+      const banner = document.createElement('div');
+      banner.className = 'roundtable-banner';
+      banner.textContent = '역할별 토의 · 시뮬레이션';
+      wrap.appendChild(banner);
+      turns.forEach(function (turn) {
+        const block = document.createElement('div');
+        block.className = 'roundtable-turn';
+        const lab = document.createElement('div');
+        lab.className = 'rt-label';
+        lab.textContent = turn.label || '';
+        const tx = document.createElement('div');
+        tx.className = 'rt-text';
+        setBubbleMarkdown(tx, turn.content || '');
+        block.appendChild(lab);
+        block.appendChild(tx);
+        wrap.appendChild(block);
+      });
+      d.appendChild(wrap);
+      if (legalExtras && legalExtras.links && legalExtras.links.length > 0) {
+        const lw = document.createElement('div');
+        lw.className = 'legal-links';
+        const lt = document.createElement('div');
+        lt.className = 'legal-links-title';
+        lt.textContent = '찾은 법령 · 국가법령정보센터(새 창)';
+        lw.appendChild(lt);
+        legalExtras.links.forEach(function (L) {
+          if (!L || !L.url) return;
+          const a = document.createElement('a');
+          a.href = L.url;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.textContent = L.label || L.url;
+          lw.appendChild(a);
+        });
+        d.appendChild(lw);
+      }
+      const copyPlain =
+        (rawAnswerText != null && String(rawAnswerText)) ||
+        (turns || []).map(t => '【' + (t.label || '') + '】\n' + (t.content || '')).join('\n\n');
+      appendBubbleCopyRow(d, copyPlain);
+      if (meta) appLog('답변 메타 | ' + meta);
+      log.appendChild(d);
+      refreshComposerMode();
+      const scrollHost = document.getElementById('chatLog');
+      const scrollEnd = function () {
+        if (scrollHost) scrollHost.scrollTop = scrollHost.scrollHeight;
+      };
+      scrollEnd();
+      requestAnimationFrame(function () {
+        requestAnimationFrame(scrollEnd);
+      });
+    }
+
+    function chatBubble(role, text, meta, legalExtras, messageId) {
+      if (role === 'assistant') {
+        const rt = parseRoundtableAnswer(text);
+        if (rt) {
+          appendAssistantRoundtable(rt, meta, legalExtras, messageId, text);
+          return;
+        }
+      }
+      const log = getChatLogFlow();
+      const scrollHost = document.getElementById('chatLog');
+      const d = document.createElement('div');
+      d.className = 'bubble ' + role;
+      if (messageId) d.setAttribute('data-message-id', messageId);
+      const body = document.createElement('div');
+      if (role === 'assistant') setBubbleMarkdown(body, text);
+      else {
+        body.className = 'bubble-body';
+        body.textContent = text;
+      }
+      d.appendChild(body);
+      if (legalExtras && legalExtras.links && legalExtras.links.length > 0 && role === 'assistant') {
+        const wrap = document.createElement('div');
+        wrap.className = 'legal-links';
+        const lt = document.createElement('div');
+        lt.className = 'legal-links-title';
+        lt.textContent = '찾은 법령 · 국가법령정보센터(새 창)';
+        wrap.appendChild(lt);
+        legalExtras.links.forEach(function (L) {
+          if (!L || !L.url) return;
+          const a = document.createElement('a');
+          a.href = L.url;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.textContent = L.label || L.url;
+          wrap.appendChild(a);
+        });
+        d.appendChild(wrap);
+      }
+      if (role === 'assistant') appendBubbleCopyRow(d, text || '');
+      if (meta && role === 'assistant') {
+        appLog('답변 메타 | ' + meta);
+      }
+      log.appendChild(d);
+      if (role === 'user') {
+        refreshComposerMode();
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            d.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          });
+        });
+      } else {
+        refreshComposerMode();
+        const scrollEnd = () => {
+          if (scrollHost) scrollHost.scrollTop = scrollHost.scrollHeight;
+        };
+        scrollEnd();
+        requestAnimationFrame(() => {
+          requestAnimationFrame(scrollEnd);
+        });
+      }
+    }
+
+    function appLog(msg) {
+      const el = document.getElementById('appLogPanel');
+      const t = new Date().toLocaleTimeString();
+      const line = '[' + t + '] ' + msg;
+      if (el) {
+        el.textContent += (el.textContent ? '\n' : '') + line;
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+
+    async function api(path, opts = {}) {
+      const h = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      if (accessToken) h['Authorization'] = 'Bearer ' + accessToken;
+      else if (demoUser && publicCfg.demo_user_header_allowed) h['X-Demo-User'] = demoUser;
+      const r = await fetch(path, { ...opts, headers: h });
+      const t = await r.text();
+      let j;
+      try {
+        j = JSON.parse(t);
+      } catch {
+        j = { raw: t };
+      }
+      if (!r.ok) {
+        let msg;
+        if (typeof j.detail === 'string') msg = j.detail;
+        else if (j.detail != null) msg = typeof j.detail === 'object' ? JSON.stringify(j.detail) : String(j.detail);
+        else if (j.raw != null) {
+          const raw = String(j.raw).trim();
+          if (r.status >= 500 && /internal server error/i.test(raw)) {
+            msg = '서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.';
+          } else {
+            msg = raw || '요청에 실패했습니다. (' + r.status + ')';
+          }
+        } else msg = '요청에 실패했습니다. (' + r.status + ')';
+        throw new Error(msg);
+      }
+      return j;
+    }
+
+    async function initConfig() {
+      const cr = await fetch('/api/v1/config/public');
+      publicCfg = await cr.json();
+      if (publicCfg.supabase_url && publicCfg.supabase_anon_key) {
+        supabase = createClient(publicCfg.supabase_url, publicCfg.supabase_anon_key);
+        document.getElementById('demoArea').style.display = 'none';
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          accessToken = session.access_token;
+          showLoggedIn(session.user.email || session.user.id);
+          if (publicCfg.jwt_verification_relaxed) {
+            authErr.textContent = '로컬 모드: SUPABASE_JWT_SECRET 없음 — Bearer는 서명 검증 없이 사용됩니다. 운영에서는 JWT Secret을 설정하세요.';
+          }
+        } else {
+          showLoggedOut();
+        }
+        supabase.auth.onAuthStateChange((_e, session) => {
+          accessToken = session?.access_token || null;
+          if (session) {
+            showLoggedIn(session.user.email || session.user.id);
+            if (publicCfg.jwt_verification_relaxed) {
+              authErr.textContent = '로컬 모드: SUPABASE_JWT_SECRET 없음 — Bearer는 서명 검증 없이 사용됩니다. 운영에서는 JWT Secret을 설정하세요.';
+            }
+          } else showLoggedOut();
+        });
+      } else {
+        document.getElementById('loginForm').style.display = 'none';
+        if (publicCfg.demo_user_header_allowed) {
+          document.getElementById('demoArea').style.display = 'block';
+          document.getElementById('demoUserId').value = demoUser;
+        } else {
+          authErr.textContent = 'SUPABASE_URL·SUPABASE_ANON_KEY 또는 ALLOW_DEMO_USER_HEADER=true 가 필요합니다.';
+        }
+      }
+    }
+
+    function showLoggedOut() {
+      document.getElementById('loginForm').style.display = 'block';
+      document.getElementById('loggedBar').style.display = 'none';
+      accessToken = null;
+      _ragUserIdForChecks = '';
+      const cm = document.getElementById('currentChatModelText');
+      if (cm) cm.textContent = '로그인 후 「유저 정보」에서 확인할 수 있습니다.';
+      const uks = document.getElementById('userApiKeyStatus');
+      if (uks) uks.textContent = '로그인 후 표시됩니다.';
+      const llmWrap = document.getElementById('llm-key-wrap');
+      if (llmWrap) llmWrap.style.display = 'none';
+    }
+    function showLoggedIn(label) {
+      document.getElementById('loginForm').style.display = 'none';
+      document.getElementById('loggedBar').style.display = 'block';
+      document.getElementById('userPill').textContent = label;
+      authErr.textContent = '';
+      loadUserModelSettingsPanel().catch(() => {});
+    }
+
+    document.getElementById('btnLogin').onclick = async () => {
+      authErr.textContent = '';
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPw').value;
+      if (!supabase) return;
+      appLog('로그인 시도…');
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        authErr.textContent = error.message;
+        appLog('로그인 실패: ' + error.message);
+      } else appLog('로그인 완료');
+    };
+
+    document.getElementById('btnSignup').onclick = async () => {
+      authErr.textContent = '';
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPw').value;
+      if (!supabase) return;
+      if (password.length < 6) {
+        authErr.textContent = '비밀번호 6자 이상';
+        return;
+      }
+      appLog('회원가입 요청…');
+      const { error } = await supabase.auth.signUp({ email, password });
+      if (error) {
+        authErr.textContent = error.message;
+        appLog('회원가입 실패: ' + error.message);
+      } else {
+        appLog('가입 메일을 확인하세요(프로젝트 설정에 따라 바로 로그인될 수 있음).');
+      }
+    };
+
+    document.getElementById('btnLogout').onclick = async () => {
+      appLog('로그아웃…');
+      if (supabase) await supabase.auth.signOut();
+      demoUser = '';
+      localStorage.removeItem('demo_user_id');
+      showLoggedOut();
+    };
+
+    document.getElementById('btnDemoApply').onclick = () => {
+      demoUser = document.getElementById('demoUserId').value.trim() || 'demo-user';
+      localStorage.setItem('demo_user_id', demoUser);
+      authErr.textContent = '';
+      appLog('데모 사용자 설정: ' + demoUser);
+      document.getElementById('loggedBar').style.display = 'block';
+      document.getElementById('userPill').textContent = '데모: ' + demoUser;
+      document.getElementById('loginForm').style.display = 'none';
+      loadUserModelSettingsPanel().catch(() => {});
+    };
+
+    function requireAuth() {
+      if (accessToken || (demoUser && publicCfg.demo_user_header_allowed)) return true;
+      appLog('로그인 또는 데모 사용자 설정이 필요합니다.');
+      return false;
+    }
+
+    /** 백엔드 stream_title.title_from_first_message 와 동일 규칙(첫 줄·공백 정리·말줄임). */
+    function streamTitleFromText(text, maxLen) {
+      const n = maxLen == null ? 52 : maxLen;
+      let line = (text || '').split(/\r?\n/, 1)[0].trim().replace(/\s+/g, ' ');
+      if (!line) return '새 대화';
+      if (line.length <= n) return line;
+      return line.slice(0, n - 1).replace(/\s+$/, '') + '…';
+    }
+
+    async function loadMessages() {
+      if (!currentStreamId || !requireAuth()) return;
+      const quietJump = !!scrollToMessageIdAfterLoad;
+      if (!quietJump) appLog('세션 메시지 로드 시작…');
+      const msgs = await api('/api/v1/streams/auth/' + currentStreamId + '/messages');
+      const flow = getChatLogFlow();
+      if (flow) flow.innerHTML = '';
+      setReviewSplit(false);
+      msgs.forEach(m =>
+        chatBubble(m.role === 'user' ? 'user' : 'assistant', m.content, null, null, m.id)
+      );
+      refreshComposerMode();
+      const pendingScroll = scrollToMessageIdAfterLoad;
+      if (pendingScroll) {
+        scrollToMessageIdAfterLoad = null;
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => scrollChatToMessage(pendingScroll));
+        });
+      }
+      if (!quietJump) appLog('세션 메시지 로드 완료 (' + msgs.length + '건)');
+    }
+
+    async function loadMyPrompts() {
+      if (!requireAuth()) return;
+      const topicBox = document.getElementById('topicPromptList');
+      try {
+        const rows = await api('/api/v1/streams/auth/my-prompts?limit=120');
+        myPromptRowsCache = rows;
+        renderTopicBucketBar();
+        renderTopicPromptList();
+      } catch (e) {
+        const msg = '목록 로드 실패: ' + e.message;
+        if (topicBox) topicBox.textContent = msg;
+      }
+    }
+
+    async function refreshSessionList(opts) {
+      if (!requireAuth()) return;
+      const pending = opts && opts.pendingState;
+      const silent = opts && opts.silent;
+      if (silent) {
+        /* DOM만 갱신(채팅 전송 직후 세션 제목 반영 등) — 채팅에 시스템 말풍선 없음 */
+      } else if (pending) {
+        pendingLogPush(pending, '세션 목록 조회…');
+      } else {
+        appLog('세션 목록 조회…');
+      }
+      const list = await api('/api/v1/streams/auth');
+      const box = document.getElementById('sessionList');
+      if (box) {
+        box.innerHTML = '';
+        list.forEach(s => {
+          const div = document.createElement('div');
+          div.className = 'session-item' + (s.id === currentStreamId ? ' current' : '');
+          div.innerHTML = '<span>' + (s.title || '무제') + '</span><span style="color:var(--muted);font-size:0.75rem;">열기</span>';
+          div.onclick = async () => {
+            currentStreamId = s.id;
+            appLog('세션 전환: ' + (s.title || s.id.slice(0, 8)));
+            await loadMessages();
+            refreshSessionList();
+            setView('chat');
+          };
+          box.appendChild(div);
+        });
+      }
+      if (silent) {
+        return;
+      }
+      if (pending) {
+        pendingLogPush(pending, '세션 목록 로드 완료');
+      } else {
+        appLog('세션 목록 로드 완료');
+      }
+    }
+
+    document.getElementById('btnRefreshPrompts').onclick = loadMyPrompts;
+
+    document.getElementById('chatMsg').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      e.preventDefault();
+      document.getElementById('btnSend').click();
+    });
+
+    document.getElementById('btnSend').onclick = async () => {
+      if (!requireAuth()) return;
+      const text = document.getElementById('chatMsg').value.trim();
+      if (!text) return;
+      const btn = document.getElementById('btnSend');
+      btn.disabled = true;
+      let pendingState = null;
+      try {
+        let createdStream = false;
+        if (!currentStreamId) {
+          const s = await api('/api/v1/streams/auth', {
+            method: 'POST',
+            body: JSON.stringify({ title: streamTitleFromText(text) }),
+          });
+          currentStreamId = s.id;
+          createdStream = true;
+          await refreshSessionList({ silent: true }); /* 생성 직후 목록만 갱신 — 채팅에 로그 없음 */
+        }
+        chatBubble('user', text);
+        document.getElementById('chatMsg').value = '';
+
+        const mainChat = document.getElementById('chatMain');
+        const reviewActive = !!(mainChat && mainChat.classList.contains('review-split'));
+
+        pendingState = insertReplyPendingBlock(
+          reviewActive
+            ? {
+                target: 'user',
+                statusLabel: '보고자: 메시지 반영 중…',
+                doneLabel: '보고자 반영 완료',
+              }
+            : undefined
+        );
+        if (createdStream) pendingLogPush(pendingState, '새 세션 생성됨');
+        pendingLogPush(pendingState, reviewActive ? '보고자: 서버에 메시지 저장 중…' : '서버에 질의 전송 중…');
+
+        const res = await api('/api/v1/streams/auth/' + currentStreamId + '/messages', {
+          method: 'POST',
+          body: JSON.stringify({
+            content: text,
+            use_legal: isLegalOn(),
+            task: 'chat',
+            document_ids: getSelectedDocIds(),
+            skip_assistant: reviewActive,
+          }),
+        });
+        lastTopicId = res.topic_session_id;
+
+        if (reviewActive) {
+          pendingLogPush(pendingState, '보고자 반영 완료');
+          finalizePendingSuccess(pendingState);
+          pendingState = null;
+
+          const pendingRev = insertReplyPendingBlock({
+            target: 'reviewer',
+            statusLabel: '검토자: 답변을 생성중입니다',
+            doneLabel: '검토자 답변 생성 완료',
+          });
+          pendingLogPush(pendingRev, '검토자 응답 요청 중…');
+
+          const roleId = getActiveReviewRoleId();
+          const override = resolveReviewSystemPromptOverride(roleId);
+          let revOk = false;
+          try {
+            const resRev = await api('/api/v1/streams/auth/' + currentStreamId + '/review-turn', {
+              method: 'POST',
+              body: JSON.stringify({
+                role_id: apiRoleIdForReview(roleId),
+                system_prompt_override: override,
+                reporter_brief: (reviewReporterBrief || '').trim() || null,
+              }),
+            });
+            appendReviewerBubble(resRev.answer, roleId, false);
+            pendingLogPush(pendingRev, '검토 응답 수신');
+            revOk = true;
+          } catch (revErr) {
+            pendingLogPush(pendingRev, '검토 오류: ' + revErr.message);
+            appendReviewerBubble('검토 호출 실패: ' + revErr.message, roleId, true);
+            finalizePendingError(pendingRev, revErr.message);
+          }
+          await refreshSessionList({ silent: true });
+          if (revOk) {
+            finalizePendingSuccess(pendingRev);
+          }
+          loadMyPrompts();
+          return;
+        }
+
+        pendingLogPush(pendingState, '응답 수신');
+        if (res.chat_trace) {
+          const tr = res.chat_trace;
+          const rag = tr.rag || {};
+          const leg = tr.legal || {};
+          let tline = '[답변 경로] LLM 모델 ' + (tr.llm && tr.llm.model ? tr.llm.model : '?');
+          if (tr.llm && tr.llm.task) tline += ' · 작업 ' + tr.llm.task;
+          tline +=
+            ' | RAG: 선택문서 ' +
+            (rag.document_ids_selected != null ? rag.document_ids_selected : '?') +
+            '개 · 후보청크풀 ' +
+            (rag.candidate_pool_chunks != null ? rag.candidate_pool_chunks : '?') +
+            ' → 답변에 넣은 청크 ' +
+            (rag.chunks_in_prompt != null ? rag.chunks_in_prompt : '?');
+          if (rag.filter_by_documents_only) tline += ' (선택문서만 검색)';
+          pendingLogPush(pendingState, tline);
+          if (rag.top_source_titles && rag.top_source_titles.length) {
+            pendingLogPush(pendingState, '  · 상위 출처: ' + rag.top_source_titles.slice(0, 4).join(' | '));
+          }
+          if (rag.note) pendingLogPush(pendingState, '  · ' + rag.note);
+          pendingLogPush(
+            pendingState,
+            '[법령 연동] 요청 ' +
+              (leg.use_legal_requested ? '켜짐' : '꺼짐') +
+              ' · API설정 ' +
+              (leg.law_api_configured ? '있음' : '없음') +
+              ' · 본문라우팅 ' +
+              (leg.legal_routed_pipeline ? '사용' : '미사용'),
+          );
+        }
+        if (res.legal_debug) {
+          const s = res.legal_debug.summary || '';
+          const mode = res.legal_debug.mode || '';
+          const sch = res.legal_debug.search || {};
+          const svc = res.legal_debug.service || {};
+          let line = '[법령·API] ';
+          if (s) line += s;
+          else line += '(요약 없음)';
+          if (mode) line += ' | 모드:' + mode;
+          if (sch.called !== undefined) line += ' | 검색호출:' + (sch.called ? '예' : '아니오');
+          if (sch.http_status != null) line += ' | 검색HTTP:' + sch.http_status;
+          if (svc.attempted != null && svc.attempted > 0) {
+            line += ' | 본문API:' + (svc.ok || 0) + '/' + svc.attempted + '건';
+          }
+          if (typeof res.legal_debug.name_match_attempts === 'number' && res.legal_debug.name_match_attempts > 0) {
+            line += ' | 법령명·약칭 보조검색:' + res.legal_debug.name_match_attempts + '회';
+          }
+          pendingLogPush(pendingState, line);
+          if (Array.isArray(res.legal_debug.search_steps) && res.legal_debug.search_steps.length) {
+            res.legal_debug.search_steps.forEach(function (row, i) {
+              const t = formatLegalSearchStep(row, i);
+              if (t) pendingLogPush(pendingState, t);
+              if (row.http_response_preview) {
+                let pr = String(row.http_response_preview);
+                if (pr.length > 3500) pr = pr.slice(0, 3497) + '…';
+                pendingLogPush(pendingState, '  · 응답일부:\n' + pr);
+              }
+              if (Array.isArray(row.search_attempts) && row.search_attempts.length) {
+                row.search_attempts.forEach(function (a, j) {
+                  let line =
+                    '  [검색 API 시도 ' +
+                    (j + 1) +
+                    '] search=' +
+                    (a.search != null ? a.search : '?') +
+                    ' · HTTP ' +
+                    (a.http_status != null ? a.http_status : '?');
+                  if (a.hit_count != null) line += ' · hit=' + a.hit_count;
+                  if (a.picked_law_mst) line += ' · 일련번호(MST)=' + a.picked_law_mst;
+                  if (a.picked_law_id) line += ' · 법령ID=' + a.picked_law_id;
+                  if (a.picked_law_name) line += ' · 「' + a.picked_law_name + '」';
+                  if (a.error) line += ' · 오류:' + a.error;
+                  pendingLogPush(pendingState, line);
+                  if (a.request_url) pendingLogPush(pendingState, '  · 요청URL: ' + a.request_url);
+                  if (a.http_response_preview) {
+                    let pr = String(a.http_response_preview);
+                    if (pr.length > 3500) pr = pr.slice(0, 3497) + '…';
+                    pendingLogPush(pendingState, '  · 응답일부:\n' + pr);
+                  }
+                });
+              }
+            });
+          }
+          if (Array.isArray(res.legal_debug.body_fetches) && res.legal_debug.body_fetches.length) {
+            res.legal_debug.body_fetches.forEach(function (row, i) {
+              const t = formatLegalBodyFetch(row, i);
+              if (t) pendingLogPush(pendingState, t);
+              formatLegalBodyFetchPreviewLines(row).forEach(function (line) {
+                pendingLogPush(pendingState, line);
+              });
+            });
+          }
+        }
+
+        await refreshSessionList({ silent: true });
+        finalizePendingSuccess(pendingState);
+        pendingState = null;
+
+        chatBubble(
+          'assistant',
+          res.answer,
+          'intent=' + (res.intent || '') + ' · ' + res.decision_type + ' · ' + res.model_used,
+          res.legal_debug
+        );
+        runReviewTurnAfterAssistant().catch(() => {});
+        loadMyPrompts();
+      } catch (e) {
+        if (pendingState) {
+          pendingLogPush(pendingState, '오류: ' + e.message);
+          finalizePendingError(pendingState, e.message);
+        } else {
+          appLog('채팅 오류 | ' + e.message);
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    function getPdfExtractMode() {
+      const t = document.querySelector('#ragPdfModeWrap .rag-pdf-mode-opt.selected');
+      return t && t.dataset.pdfMode === 'text_only' ? 'text_only' : 'hybrid';
+    }
+    function initRagPdfModePicker() {
+      const wrap = document.getElementById('ragPdfModeWrap');
+      if (!wrap) return;
+      wrap.querySelectorAll('.rag-pdf-mode-opt').forEach(opt => {
+        opt.onclick = () => {
+          wrap.querySelectorAll('.rag-pdf-mode-opt').forEach(o => {
+            o.classList.toggle('selected', o === opt);
+            o.classList.toggle('unselected', o !== opt);
+          });
+        };
+        opt.onkeydown = e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            opt.click();
+          }
+        };
+      });
+    }
+    initRagPdfModePicker();
+
+    const RAG_UPLOAD_EXT = new Set([
+      'pdf',
+      'txt',
+      'md',
+      'markdown',
+      'png',
+      'jpg',
+      'jpeg',
+      'webp',
+      'gif',
+      'bmp',
+      'tif',
+      'tiff',
+      'ppt',
+      'pptx',
+      'xls',
+      'xlsx',
+      'doc',
+      'docx',
+      'hwp',
+      'hwpx',
+    ]);
+
+    function ragUploadFileCheck(name) {
+      const n = (name || '').trim();
+      const dot = n.lastIndexOf('.');
+      if (dot < 0) {
+        return { ok: false, message: '파일에 확장자가 없습니다. 안내에 적힌 형식만 등록할 수 있습니다.' };
+      }
+      const ext = n.slice(dot + 1).toLowerCase();
+      if (!RAG_UPLOAD_EXT.has(ext)) {
+        return {
+          ok: false,
+          message:
+            '지원하지 않는 형식(.' +
+            ext +
+            ')입니다. PDF·TXT·MD·이미지·PPT·XLS·DOC·HWP 계열만 등록할 수 있습니다.',
+        };
+      }
+      return { ok: true };
+    }
+
+    function ragAuthHeadersOnly() {
+      const h = {};
+      if (accessToken) h['Authorization'] = 'Bearer ' + accessToken;
+      else if (demoUser && publicCfg.demo_user_header_allowed) h['X-Demo-User'] = demoUser;
+      return h;
+    }
+
+    const RAG_BTN_LABEL_FILE = '파일 소스 등록';
+    const RAG_BTN_LABEL_URL = 'URL 소스 등록';
+    const RAG_BTN_LABEL_PASTE = '소스 등록';
+    const RAG_BTN_LABEL_LAW = '법령 소스 등록';
+    const RAG_BTN_BUSY = '등록중입니다…';
+
+    function syncRagFileDropZoneUI() {
+      const zone = document.getElementById('ragFileDropZone');
+      const idle = document.getElementById('ragFileDropZoneIdle');
+      const ready = document.getElementById('ragFileDropZoneReady');
+      const nameEl = document.getElementById('ragFileDropZoneReadyName');
+      const inp = document.getElementById('ragPdfFile');
+      if (!zone || !idle || !ready || !nameEl || !inp) return;
+      const f = inp.files && inp.files[0];
+      if (f && f.name) {
+        idle.style.display = 'none';
+        ready.style.display = 'block';
+        nameEl.textContent = f.name;
+        zone.classList.add('has-staged-file');
+      } else {
+        idle.style.display = 'block';
+        ready.style.display = 'none';
+        nameEl.textContent = '';
+        zone.classList.remove('has-staged-file');
+      }
+    }
+
+    function syncReportTemplateDropZoneUI() {
+      const zone = document.getElementById('reportTemplateDropZone');
+      const idle = document.getElementById('reportTemplateDropZoneIdle');
+      const ready = document.getElementById('reportTemplateDropZoneReady');
+      const nameEl = document.getElementById('reportTemplateDropZoneReadyName');
+      const inp = document.getElementById('reportTemplateFile');
+      if (!zone || !idle || !ready || !nameEl || !inp) return;
+      const f = reportTemplateFile || (inp.files && inp.files[0]);
+      if (f && f.name) {
+        idle.style.display = 'none';
+        ready.style.display = 'block';
+        nameEl.textContent = f.name;
+        zone.classList.add('has-staged-file');
+      } else {
+        idle.style.display = 'block';
+        ready.style.display = 'none';
+        nameEl.textContent = '';
+        zone.classList.remove('has-staged-file');
+      }
+    }
+
+    function defaultRagTitleFromBody(content) {
+      const lines = (content || '').split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const t = lines[i].trim();
+        if (t.length >= 2) return t.slice(0, 512);
+      }
+      return '직접 입력 소스';
+    }
+
+    let _ragTitleEditDocId = '';
+    function openRagDocTitleModal(docId, title) {
+      _ragTitleEditDocId = docId || '';
+      const bd = document.getElementById('ragDocTitleBackdrop');
+      const inp = document.getElementById('ragDocTitleInput');
+      if (!bd || !inp) return;
+      inp.value = title || '';
+      bd.classList.add('rt-open');
+      bd.setAttribute('aria-hidden', 'false');
+      setTimeout(() => inp.focus(), 50);
+    }
+    function closeRagDocTitleModal() {
+      _ragTitleEditDocId = '';
+      const bd = document.getElementById('ragDocTitleBackdrop');
+      if (bd) {
+        bd.classList.remove('rt-open');
+        bd.setAttribute('aria-hidden', 'true');
+      }
+    }
+
+    async function saveRagDocTitleFromModal() {
+      const docId = _ragTitleEditDocId;
+      const inp = document.getElementById('ragDocTitleInput');
+      if (!docId || !inp) return;
+      const title = inp.value.trim();
+      if (!title) {
+        appLog('제목을 입력하세요.');
+        return;
+      }
+      try {
+        await api('/api/v1/documents/auth/' + encodeURIComponent(docId), {
+          method: 'PATCH',
+          body: JSON.stringify({ title }),
+        });
+        appLog('소스 제목을 저장했습니다.');
+        closeRagDocTitleModal();
+        await loadDocList();
+      } catch (e) {
+        appLog('제목 저장 실패: ' + e.message);
+      }
+    }
+
+    function initRagFileDropAndTitleModal() {
+      const zone = document.getElementById('ragFileDropZone');
+      const inp = document.getElementById('ragPdfFile');
+      const bd = document.getElementById('ragDocTitleBackdrop');
+      if (zone && inp) {
+        const pick = () => inp.click();
+        zone.addEventListener('click', pick);
+        zone.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            pick();
+          }
+        });
+        ['dragenter', 'dragover'].forEach(ev =>
+          zone.addEventListener(ev, e => {
+            e.preventDefault();
+            e.stopPropagation();
+            zone.classList.add('dragover');
+          }),
+        );
+        ['dragleave', 'drop'].forEach(ev =>
+          zone.addEventListener(ev, e => {
+            e.preventDefault();
+            e.stopPropagation();
+            zone.classList.remove('dragover');
+          }),
+        );
+        zone.addEventListener('drop', e => {
+          const fl = e.dataTransfer && e.dataTransfer.files;
+          if (!fl || !fl.length) return;
+          if (fl.length > 1) appLog('여러 파일 중 첫 번째만 등록합니다.');
+          try {
+            const dt = new DataTransfer();
+            dt.items.add(fl[0]);
+            inp.files = dt.files;
+            appLog('파일이 선택되었습니다: ' + fl[0].name);
+            syncRagFileDropZoneUI();
+          } catch (err) {
+            appLog('파일을 넣는 데 실패했습니다. 파일 선택 버튼으로 다시 시도하세요.');
+          }
+        });
+        inp.addEventListener('change', () => {
+          const f = inp.files && inp.files[0];
+          if (f) appLog('파일 선택: ' + f.name);
+          syncRagFileDropZoneUI();
+        });
+        syncRagFileDropZoneUI();
+      }
+      if (bd) {
+        bd.addEventListener('click', e => {
+          if (e.target.id === 'ragDocTitleBackdrop') closeRagDocTitleModal();
+        });
+      }
+      const c = document.getElementById('ragDocTitleCancel');
+      const s = document.getElementById('ragDocTitleSave');
+      if (c) c.onclick = () => closeRagDocTitleModal();
+      if (s) s.onclick = () => saveRagDocTitleFromModal().catch(() => {});
+    }
+    initRagFileDropAndTitleModal();
+
+    applyReviewRoleUi(getSavedReviewRoleId());
+
+    document.getElementById('btnReview').onclick = async () => {
+      const main = document.getElementById('chatMain');
+      if (!main) return;
+      if (main.classList.contains('review-split')) {
+        setReviewSplit(false);
+        return;
+      }
+      if (!requireAuth()) return;
+      if (!currentStreamId) {
+        appLog('대화 모드를 켜려면 대화 세션에서 먼저 메시지를 보내거나 세션을 여세요.');
+        return;
+      }
+      setReviewSplit(true);
+      clearReviewerLog();
+      applyReviewRoleUi(getSavedReviewRoleId());
+      const roleId = getActiveReviewRoleId();
+      const override = resolveReviewSystemPromptOverride(roleId);
+      const pendRep = insertReplyPendingBlock({
+        target: 'user',
+        statusLabel: '보고자: 요약 보고 생성 중…',
+        doneLabel: '요약 보고 수신 완료',
+      });
+      pendingLogPush(pendRep, '검토 부트스트랩 요청…');
+      const pendRev = insertReplyPendingBlock({
+        target: 'reviewer',
+        statusLabel: '검토자: 답변을 생성중입니다',
+        doneLabel: '검토자 답변 수신 완료',
+      });
+      pendingLogPush(pendRev, '동일 요청으로 검토자 답변 대기…');
+      try {
+        const res = await api('/api/v1/streams/auth/' + currentStreamId + '/review-bootstrap', {
+          method: 'POST',
+          body: JSON.stringify({
+            role_id: apiRoleIdForReview(roleId),
+            system_prompt_override: override,
+          }),
+        });
+        pendingLogPush(pendRep, '요약 보고 수신');
+        pendingLogPush(pendRev, '검토자 의견 수신');
+        finalizePendingSuccess(pendRep);
+        finalizePendingSuccess(pendRev);
+        reporterReplyHistory = [];
+        reviewerOpinionHistory = [];
+        appendReporterBubble('요약 보고', res.report);
+        reviewReporterBrief = res.report;
+        appendReviewerBubble(res.review, roleId, false);
+        reviewSessionPrimed = true;
+      } catch (e) {
+        pendingLogPush(pendRep, '오류: ' + e.message);
+        pendingLogPush(pendRev, '오류: ' + e.message);
+        finalizePendingError(pendRep, e.message);
+        finalizePendingError(pendRev, e.message);
+        appLog('검토 시작 실패: ' + e.message);
+        setReviewSplit(false);
+      }
+    };
+
+    document.getElementById('btnReporterReply').onclick = async () => {
+      if (!requireAuth() || !currentStreamId) return;
+      const op = (lastReviewerOpinion || '').trim();
+      if (!op) {
+        appLog('검토자 의견이 없습니다. 먼저 검토가 생성되었는지 확인하세요.');
+        return;
+      }
+      const roleId = getActiveReviewRoleId();
+      const override = resolveReviewSystemPromptOverride(roleId);
+      if (roleId === 'custom' && !override) {
+        appLog('사용자 페르소나가 비었습니다. 역할 설정에서 입력하세요.');
+        return;
+      }
+      let pendRep = null;
+      let pendRev = null;
+      try {
+        pendRep = insertReplyPendingBlock({
+          target: 'user',
+          statusLabel: '보고자: 답변을 생성중입니다',
+          doneLabel: '보고자 답변 완료',
+        });
+        pendingLogPush(pendRep, '보고자 답변 요청…');
+        const priorRep =
+          reporterReplyHistory.length > 0 ? { prior_reporter_replies: reporterReplyHistory.slice() } : {};
+        const priorRev =
+          reviewerOpinionHistory.length > 1
+            ? { prior_reviewer_opinions: reviewerOpinionHistory.slice(0, -1) }
+            : {};
+        const res = await api('/api/v1/streams/auth/' + currentStreamId + '/review-reporter-reply', {
+          method: 'POST',
+          body: JSON.stringify({
+            reviewer_opinion: op,
+            reporter_brief: reviewReporterBrief || null,
+            ...priorRep,
+            ...priorRev,
+          }),
+        });
+        appendReporterBubble('보고자 답변', res.reply);
+        pendingLogPush(pendRep, '보고자 답변 수신');
+        finalizePendingSuccess(pendRep);
+        pendRep = null;
+
+        pendRev = insertReplyPendingBlock({
+          target: 'reviewer',
+          statusLabel: '검토자: 답변을 생성중입니다',
+          doneLabel: '검토자 답변 완료',
+        });
+        pendingLogPush(pendRev, '검토자 재검토 요청…');
+        const resRev = await api('/api/v1/streams/auth/' + currentStreamId + '/review-turn', {
+          method: 'POST',
+          body: JSON.stringify({
+            role_id: apiRoleIdForReview(roleId),
+            system_prompt_override: override,
+            reporter_brief: (reviewReporterBrief || '').trim() || null,
+            prior_reviewer_opinion: op,
+            reporter_reply_followup: res.reply,
+            ...priorRep,
+          }),
+        });
+        appendReviewerBubble(resRev.answer, roleId, false);
+        pendingLogPush(pendRev, '검토자 답변 수신');
+        finalizePendingSuccess(pendRev);
+        pendRev = null;
+      } catch (e) {
+        appLog('보고자 답변·재검토 실패: ' + e.message);
+        if (pendRep) finalizePendingError(pendRep, e.message);
+        if (pendRev) finalizePendingError(pendRev, e.message);
+      }
+    };
+
+    document.querySelectorAll('.rt-role-btn').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.rt-role-btn').forEach(b => {
+          const on = b === btn;
+          b.classList.toggle('selected', on);
+          b.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+        syncRtUserPersonaWrapVisibility();
+      };
+    });
+
+    document.querySelectorAll('#composerReviewRoleGroup .review-role-btn').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('#composerReviewRoleGroup .review-role-btn').forEach(b => {
+          const on = b === btn;
+          b.classList.toggle('selected', on);
+          b.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+        const rid = btn.dataset.role;
+        if (rid) {
+          setSavedReviewRoleId(rid);
+          applyReviewRoleUi(getSavedReviewRoleId());
+        }
+      };
+      btn.oncontextmenu = e => {
+        e.preventDefault();
+        const rid = btn.dataset.role;
+        if (rid) openPersonaEditor(rid);
+      };
+    });
+
+    document.getElementById('personaEditCancel').onclick = closePersonaEditor;
+    document.getElementById('personaEditBackdrop').onclick = e => {
+      if (e.target.id === 'personaEditBackdrop') closePersonaEditor();
+    };
+    document.getElementById('personaEditSave').onclick = () => {
+      const ta = document.getElementById('personaEditText');
+      if (!personaEditRoleId || !ta) {
+        closePersonaEditor();
+        return;
+      }
+      const raw = ta.value.trim();
+      const def = defaultReviewPersonaText(personaEditRoleId).trim();
+      if (!raw || raw === def) setReviewPersonaOverride(personaEditRoleId, '');
+      else setReviewPersonaOverride(personaEditRoleId, raw);
+      closePersonaEditor();
+    };
+
+    document.getElementById('rtCancel').onclick = () => {
+      const bd = document.getElementById('rtBackdrop');
+      bd.classList.remove('rt-open');
+      bd.setAttribute('aria-hidden', 'true');
+    };
+    document.getElementById('rtBackdrop').onclick = e => {
+      if (e.target.id === 'rtBackdrop') {
+        e.currentTarget.classList.remove('rt-open');
+        e.currentTarget.setAttribute('aria-hidden', 'true');
+      }
+    };
+    document.getElementById('rtRun').onclick = () => {
+      if (!requireAuth()) return;
+      const rtSel = document.querySelector('.rt-role-btn.selected');
+      let roleId = rtSel && rtSel.dataset.rtRole ? rtSel.dataset.rtRole : 'supervisor';
+      if (roleId === 'custom') {
+        const ta = document.getElementById('rtUserPersonaInline');
+        const raw = (ta && ta.value.trim()) || '';
+        if (!raw) {
+          appLog('사용자 설정을 쓰려면 페르소나 설명을 입력하세요.');
+          return;
+        }
+        setUserDefinedReviewPersonaDescriptor(raw);
+      }
+      setSavedReviewRoleId(roleId);
+      applyReviewRoleUi(getSavedReviewRoleId());
+      const bd = document.getElementById('rtBackdrop');
+      bd.classList.remove('rt-open');
+      bd.setAttribute('aria-hidden', 'true');
+      appLog('검토 역할을 저장했습니다.');
+    };
+
+    async function saveLlmKeysFromInputs(ids) {
+      if (!requireAuth()) return false;
+      appLog('API 키 저장 시작…');
+      const body = {
+        openai_api_key: document.getElementById(ids.openai).value || null,
+        anthropic_api_key: document.getElementById(ids.anthropic).value || null,
+        google_api_key: document.getElementById(ids.google).value || null,
+      };
+      if (!body.openai_api_key && !body.anthropic_api_key && !body.google_api_key) {
+        appLog('저장할 키를 입력하세요.');
+        return false;
+      }
+      await api('/api/v1/users/me/llm-keys', { method: 'PUT', body: JSON.stringify(body) });
+      document.getElementById(ids.openai).value = '';
+      document.getElementById(ids.anthropic).value = '';
+      document.getElementById(ids.google).value = '';
+      appLog('API 키 저장 완료');
+      await loadUserModelSettingsPanel();
+      return true;
+    }
+
+    document.getElementById('btnSaveKeys').onclick = async () => {
+      try {
+        await saveLlmKeysFromInputs({ openai: 'keyOpenai', anthropic: 'keyAnthropic', google: 'keyGoogle' });
+      } catch (e) {
+        appLog('API 키 저장 실패: ' + e.message);
+      }
+    };
+
+    document.getElementById('btnSaveKeysUser').onclick = async () => {
+      try {
+        await saveLlmKeysFromInputs({
+          openai: 'userKeyOpenai',
+          anthropic: 'userKeyAnthropic',
+          google: 'userKeyGoogle',
+        });
+      } catch (e) {
+        appLog('API 키 저장 실패: ' + e.message);
+      }
+    };
+
+    document.getElementById('btnRagIngest').onclick = async () => {
+      if (!requireAuth()) return;
+      const content = document.getElementById('ragBody').value.trim();
+      if (!content) return;
+      const btn = document.getElementById('btnRagIngest');
+      btn.disabled = true;
+      btn.textContent = RAG_BTN_BUSY;
+      appLog('직접 입력 소스 등록 시작…');
+      try {
+        const r = await api('/api/v1/documents/chunks/auth', {
+          method: 'POST',
+          body: JSON.stringify({
+            source_title: defaultRagTitleFromBody(content),
+            content,
+            topic_session_id: null,
+          }),
+        });
+        document.getElementById('ragBody').value = '';
+        appLog('직접 입력 소스 등록 완료');
+        await loadDocList();
+        ragDocListAddChecked(r.document_id);
+      } catch (e) {
+        appLog('직접 입력 소스 등록 실패: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = RAG_BTN_LABEL_PASTE;
+      }
+    };
+
+    function parseFetchErrorResponse(r, t) {
+      let j;
+      try {
+        j = JSON.parse(t);
+      } catch {
+        j = { raw: t };
+      }
+      if (typeof j.detail === 'string') return j.detail;
+      if (j.detail != null) return typeof j.detail === 'object' ? JSON.stringify(j.detail) : String(j.detail);
+      if (j.raw != null) return String(j.raw).trim() || '요청 실패 (' + r.status + ')';
+      return '요청 실패 (' + r.status + ')';
+    }
+
+    document.getElementById('btnRagPdfIngest').onclick = async () => {
+      if (!requireAuth()) return;
+      const inp = document.getElementById('ragPdfFile');
+      const f = inp && inp.files && inp.files[0];
+      if (!f) {
+        appLog('파일을 선택하거나 드래그 앤 드롭하세요.');
+        return;
+      }
+      const chk = ragUploadFileCheck(f.name);
+      if (!chk.ok) {
+        appLog(chk.message);
+        return;
+      }
+      const isPdf = f.name.toLowerCase().endsWith('.pdf');
+      const mode = getPdfExtractMode();
+      const textOnly = mode === 'text_only';
+      appLog(
+        isPdf
+          ? textOnly
+            ? '파일 소스 등록 중… (PDF 텍스트 레이어만, 쪽 묶음 처리)'
+            : '파일 소스 등록 중… (PDF 텍스트+OCR, 용량·쪽수에 따라 시간이 걸릴 수 있음)'
+          : '파일 소스 등록 중… (형식에 따라 본문 추출)',
+      );
+      const btn = document.getElementById('btnRagPdfIngest');
+      btn.disabled = true;
+      btn.textContent = RAG_BTN_BUSY;
+      try {
+        const fd = new FormData();
+        fd.append('file', f, f.name);
+        fd.append('extract_mode', mode);
+        const r = await fetch('/api/v1/documents/auth/file-ingest', {
+          method: 'POST',
+          headers: ragAuthHeadersOnly(),
+          body: fd,
+        });
+        const t = await r.text();
+        if (!r.ok) throw new Error(parseFetchErrorResponse(r, t));
+        const j = JSON.parse(t);
+        inp.value = '';
+        syncRagFileDropZoneUI();
+        let line =
+          '파일 소스 등록 완료 · 청크 ' + j.chunks + ' · 벡터 반영 ' + (j.embedded_chunks != null ? j.embedded_chunks : '?');
+        if (j.extract_mode) line += ' · PDF 모드 ' + j.extract_mode;
+        if (j.extract_mode && j.extract_mode !== 'text_only' && j.ocr_pages != null)
+          line += ' · OCR 적용 페이지(추정) ' + j.ocr_pages;
+        if (j.filename) line += ' · ' + j.filename;
+        appLog(line);
+        await loadDocList();
+        ragDocListAddChecked(j.document_id);
+      } catch (e) {
+        appLog('파일 소스 등록 실패: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = RAG_BTN_LABEL_FILE;
+        syncRagFileDropZoneUI();
+      }
+    };
+
+    document.getElementById('btnRagUrlIngest').onclick = async () => {
+      if (!requireAuth()) return;
+      const url = document.getElementById('ragUrl').value.trim();
+      if (!url) {
+        appLog('URL을 입력하세요.');
+        return;
+      }
+      const btn = document.getElementById('btnRagUrlIngest');
+      btn.disabled = true;
+      btn.textContent = RAG_BTN_BUSY;
+      appLog('URL 페이지를 가져와 소스로 등록하는 중…');
+      try {
+        const r = await api('/api/v1/documents/auth/url-ingest', {
+          method: 'POST',
+          body: JSON.stringify({ url }),
+        });
+        document.getElementById('ragUrl').value = '';
+        appLog(
+          'URL 소스 등록 완료: ' +
+            (r.canonical_url || url) +
+            ' · 청크 ' +
+            (r.chunks != null ? r.chunks : '?') +
+            ' · 벡터 반영 ' +
+            (r.embedded_chunks != null ? r.embedded_chunks : '?'),
+        );
+        await loadDocList();
+        ragDocListAddChecked(r.document_id);
+      } catch (e) {
+        appLog('URL 소스 등록 실패: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = RAG_BTN_LABEL_URL;
+      }
+    };
+
+    async function loadDocList() {
+      if (!requireAuth()) return;
+      try {
+        const [list, settings] = await Promise.all([
+          api('/api/v1/documents/auth/list'),
+          api('/api/v1/users/me/settings'),
+        ]);
+        _ragUserIdForChecks = settings.user_id || '';
+        const idsNow = new Set(list.map(d => d.id));
+        const savedChecks = loadRagDocChecksSet(idsNow);
+
+        const box = document.getElementById('docCheckList');
+        box.innerHTML = '';
+        list.forEach(d => {
+          const row = document.createElement('div');
+          row.className = 'rag-doc-row' + (savedChecks.has(d.id) ? ' selected' : ' unselected');
+          row.dataset.docId = d.id;
+          row.setAttribute('role', 'button');
+          row.tabIndex = 0;
+          const main = document.createElement('div');
+          main.className = 'rag-doc-main';
+          const titleEl = document.createElement('div');
+          titleEl.className = 'rag-doc-title';
+          let prefix = '';
+          if (d.shared_globally) prefix = '[전체 공유] ';
+          titleEl.textContent = prefix + (d.title || '무제');
+          const meta = document.createElement('div');
+          meta.className = 'rag-doc-meta';
+          let tail = (d.chunk_count != null ? d.chunk_count : 0) + '청크';
+          if (d.source_kind === 'url' && d.source_url) {
+            let u = d.source_url;
+            if (u.length > 56) u = u.slice(0, 53) + '…';
+            tail = '[웹] ' + tail + ' · ' + u;
+          } else if (d.source_kind === 'pdf') {
+            tail = '[PDF] ' + tail;
+          } else if (d.source_kind === 'file') {
+            tail = '[파일] ' + tail;
+          } else if (d.source_kind === 'law' && d.source_url) {
+            let u = d.source_url;
+            if (u.length > 64) u = u.slice(0, 61) + '…';
+            tail = '[법령] ' + tail + ' · ' + u;
+          }
+          if (!d.is_owner) tail += ' · 등록자 공유 문서';
+          meta.textContent = tail;
+          main.appendChild(titleEl);
+          main.appendChild(meta);
+          row.appendChild(main);
+          const actions = document.createElement('div');
+          actions.className = 'rag-doc-actions';
+          if (d.is_owner) {
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'btn btn-secondary btn-sm';
+            del.textContent = '삭제';
+            del.title = '이 소스와 검색용 청크 삭제';
+            del.onclick = async ev => {
+              ev.stopPropagation();
+              if (!confirm('이 소스와 검색용 청크를 삭제할까요?')) return;
+              try {
+                const h = {};
+                if (accessToken) h['Authorization'] = 'Bearer ' + accessToken;
+                else if (demoUser && publicCfg.demo_user_header_allowed) h['X-Demo-User'] = demoUser;
+                const r = await fetch('/api/v1/documents/auth/' + encodeURIComponent(d.id), {
+                  method: 'DELETE',
+                  headers: h,
+                });
+                if (!r.ok) {
+                  const t = await r.text();
+                  throw new Error(parseFetchErrorResponse(r, t));
+                }
+                appLog('문서 삭제됨: ' + (d.title || d.id));
+                persistRagDocCheck(d.id, false);
+                await loadDocList();
+              } catch (e) {
+                appLog('문서 삭제 실패: ' + e.message);
+              }
+            };
+            actions.appendChild(del);
+          }
+          row.appendChild(actions);
+          if (d.is_owner) {
+            row.oncontextmenu = ev => {
+              ev.preventDefault();
+              ev.stopPropagation();
+              openRagDocTitleModal(d.id, d.title || '');
+            };
+          }
+          row.onclick = () => {
+            const on = !row.classList.contains('selected');
+            setRagDocRowVisual(row, on);
+            persistRagDocCheck(d.id, on);
+          };
+          row.onkeydown = e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              row.click();
+            }
+          };
+          box.appendChild(row);
+        });
+      } catch (e) {
+        appLog('문서 목록 실패: ' + e.message);
+      }
+    }
+
+    async function loadLawPopularity() {
+      if (!requireAuth()) return;
+      const box = document.getElementById('lawPopularityList');
+      if (!box) return;
+      try {
+        const rows = await api('/api/v1/documents/auth/law-popularity?limit=50');
+        box.innerHTML = '';
+        if (!rows.length) {
+          box.textContent = '(아직 누적된 법령이 없습니다. 채팅에서 「법령」을 켜고 질의해 보세요.)';
+          return;
+        }
+        rows.forEach((row, idx) => {
+          const wrap = document.createElement('div');
+          wrap.style.cssText =
+            'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid var(--border);flex-wrap:wrap;';
+          const left = document.createElement('div');
+          left.style.flex = '1';
+          left.style.minWidth = '140px';
+          const t1 = document.createElement('div');
+          t1.textContent = (idx + 1) + '. ' + (row.law_title || row.law_id);
+          const t2 = document.createElement('div');
+          t2.style.color = 'var(--muted)';
+          t2.style.fontSize = '0.8rem';
+          t2.textContent =
+            '누적 ' + row.hit_count + '회 · 키(일련번호·법령ID 등) ' + row.law_id;
+          left.appendChild(t1);
+          left.appendChild(t2);
+          wrap.appendChild(left);
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.style.marginTop = '0';
+          btn.style.width = 'auto';
+          if (row.rag_document_id) {
+            btn.className = 'btn btn-secondary btn-sm';
+            btn.textContent = '등록됨';
+            btn.disabled = true;
+          } else {
+            btn.className = 'btn btn-primary btn-sm';
+            btn.textContent = RAG_BTN_LABEL_LAW;
+            btn.onclick = async () => {
+              btn.disabled = true;
+              btn.textContent = RAG_BTN_BUSY;
+              try {
+                await api('/api/v1/documents/auth/law-ingest', {
+                  method: 'POST',
+                  body: JSON.stringify({ law_id: row.law_id, law_title: row.law_title || '' }),
+                });
+                appLog('법령 소스 등록 완료: ' + row.law_id);
+                await loadLawPopularity();
+                await loadDocList();
+              } catch (e) {
+                appLog('법령 소스 등록 실패: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = RAG_BTN_LABEL_LAW;
+              }
+            };
+          }
+          wrap.appendChild(btn);
+          box.appendChild(wrap);
+        });
+      } catch (e) {
+        box.textContent = '자주 찾는 법령 목록 실패: ' + e.message;
+      }
+    }
+
+    function loadRagPanel() {
+      loadDocList();
+      loadLawPopularity();
+    }
+
+    document.getElementById('btnLoadDocs').onclick = loadDocList;
+    document.getElementById('btnLoadLawPopularity').onclick = loadLawPopularity;
+    document.querySelector('.nav-btn[data-view="rag"]').addEventListener('click', loadRagPanel);
+
+    function initReportTemplateDrop() {
+      const zone = document.getElementById('reportTemplateDropZone');
+      const inp = document.getElementById('reportTemplateFile');
+      if (!zone || !inp) return;
+      const pick = () => inp.click();
+      zone.addEventListener('click', pick);
+      zone.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          pick();
+        }
+      });
+      ['dragenter', 'dragover'].forEach(ev =>
+        zone.addEventListener(ev, e => {
+          e.preventDefault();
+          e.stopPropagation();
+          zone.classList.add('dragover');
+        }),
+      );
+      ['dragleave', 'drop'].forEach(ev =>
+        zone.addEventListener(ev, e => {
+          e.preventDefault();
+          e.stopPropagation();
+          zone.classList.remove('dragover');
+        }),
+      );
+      const accept = f => f && /\.(hwp|hwpx|doc|docx)$/i.test(f.name);
+      zone.addEventListener('drop', e => {
+        const fl = e.dataTransfer && e.dataTransfer.files;
+        if (!fl || !fl.length) return;
+        const f = fl[0];
+        if (!accept(f)) {
+          appLog('양식은 HWP, HWPX, DOC, DOCX 만 지원합니다.');
+          return;
+        }
+        reportTemplateFile = f;
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(f);
+          inp.files = dt.files;
+        } catch (_) {}
+        appLog('보고서 양식 선택: ' + f.name);
+        syncReportTemplateDropZoneUI();
+      });
+      inp.addEventListener('change', () => {
+        const f = inp.files && inp.files[0];
+        if (!f) {
+          reportTemplateFile = null;
+          syncReportTemplateDropZoneUI();
+          return;
+        }
+        if (!accept(f)) {
+          appLog('양식은 HWP, HWPX, DOC, DOCX 만 지원합니다.');
+          inp.value = '';
+          reportTemplateFile = null;
+          syncReportTemplateDropZoneUI();
+          return;
+        }
+        reportTemplateFile = f;
+        appLog('보고서 양식 선택: ' + f.name);
+        syncReportTemplateDropZoneUI();
+      });
+      syncReportTemplateDropZoneUI();
+    }
+    initReportTemplateDrop();
+
+    document.querySelectorAll('#view-review .review-compose-btn[data-kind]').forEach(btn => {
+      btn.onclick = async () => {
+        if (!requireAuth() || !lastTopicId) {
+          appLog('검토: 먼저 채팅으로 토픽이 잡힌 답변을 받으세요.');
+          return;
+        }
+        setReviewOutGenerating();
+        setReviewComposeButtonsDisabled(true);
+        appLog('통합 보고서 초안(전체체인 3단) …');
+        try {
+          const fd = new FormData();
+          const hintEl = document.getElementById('reportScenarioHint');
+          fd.append('scenario_hint', hintEl ? hintEl.value.trim() : '');
+          if (reportTemplateFile) fd.append('template_file', reportTemplateFile, reportTemplateFile.name);
+          const url =
+            '/api/v1/topics/auth/' +
+            encodeURIComponent(lastTopicId) +
+            '/compose?kind=report&full_chain=true';
+          const h = {};
+          if (accessToken) h['Authorization'] = 'Bearer ' + accessToken;
+          else if (demoUser && publicCfg.demo_user_header_allowed) h['X-Demo-User'] = demoUser;
+          const r = await fetch(url, { method: 'POST', headers: h, body: fd });
+          const t = await r.text();
+          if (!r.ok) throw new Error(parseFetchErrorResponse(r, t));
+          const res = JSON.parse(t);
+          fillReviewAgentOutput(res);
+          appLog('문서 초안 완료' + (res.template_applied ? ' (양식 반영)' : ''));
+        } catch (e) {
+          const el = document.getElementById('reviewOut');
+          if (el) {
+            el.removeAttribute('style');
+            el.className = 'bubble-body';
+            el.style.color = 'var(--muted)';
+            el.style.fontSize = '0.9rem';
+            el.textContent = '생성에 실패했습니다: ' + e.message;
+          }
+          const act = document.getElementById('reviewOutActions');
+          if (act) act.hidden = true;
+          lastReviewComposeJson = null;
+          lastReviewCopyMarkdown = '';
+          appLog('문서 초안 실패: ' + e.message);
+        } finally {
+          setReviewComposeButtonsDisabled(false);
+        }
+      };
+    });
+
+    document.getElementById('btnReviewOutCopy').onclick = () => {
+      if (!lastReviewCopyMarkdown || !String(lastReviewCopyMarkdown).trim()) {
+        appLog('복사할 초안이 없습니다. 먼저 「보고서」로 생성하세요.');
+        return;
+      }
+      copyTextToClipboard(lastReviewCopyMarkdown);
+    };
+
+    document.getElementById('btnReviewOutDocx').onclick = async () => {
+      if (!requireAuth()) return;
+      if (!lastReviewComposeJson || !lastReviewComposeJson.template_applied) {
+        appLog('서식 파일을 등록하고 생성한 경우에만 Word 다운로드를 사용할 수 있습니다.');
+        return;
+      }
+      const content = docxBodyFromComposeResponse(lastReviewComposeJson);
+      if (!content.trim()) {
+        appLog('다운로드할 본문이 없습니다.');
+        return;
+      }
+      let base = '통합보고서_초안';
+      if (reportTemplateFile && reportTemplateFile.name) {
+        base = reportTemplateFile.name.replace(/\.[^.]+$/, '') + '_초안';
+      }
+      const btn = document.getElementById('btnReviewOutDocx');
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '준비 중…';
+      try {
+        const h = { 'Content-Type': 'application/json', ...ragAuthHeadersOnly() };
+        const r = await fetch('/api/v1/topics/auth/export-docx', {
+          method: 'POST',
+          headers: h,
+          body: JSON.stringify({
+            content,
+            title: '통합 보고서 초안',
+            filename_base: base,
+          }),
+        });
+        if (!r.ok) {
+          const tx = await r.text();
+          throw new Error(parseFetchErrorResponse(r, tx));
+        }
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        const objUrl = URL.createObjectURL(blob);
+        a.href = objUrl;
+        a.download = base.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') + '.docx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objUrl);
+        appLog('Word(.docx) 파일을 다운로드했습니다.');
+      } catch (e) {
+        appLog('Word 다운로드 실패: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    };
+
+    document.getElementById('btnSaveModels').onclick = async () => {
+      if (!requireAuth()) return;
+      const chatModel = document.getElementById('modelChatSelect').value.trim();
+      if (!chatModel) {
+        appLog('채팅 모델을 선택할 수 없습니다. API 키를 먼저 저장하세요.');
+        return;
+      }
+      const tasks = {};
+      for (const [key, sid] of MODEL_TASK_MAP) {
+        const v = document.getElementById(sid).value.trim();
+        if (v) tasks[key] = v;
+      }
+      await api('/api/v1/users/me/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          default_model: chatModel,
+          task_models: tasks,
+        }),
+      });
+      appLog('모델 설정 저장됨');
+      await loadUserModelSettingsPanel();
+    };
+
+    document.getElementById('btnLoadModels').onclick = () => loadUserModelSettingsPanel();
+
+    document.getElementById('modelChatSelect').addEventListener('change', () => updateCurrentChatModelBanner());
+
+    document.getElementById('btnLoadAudit').onclick = async () => {
+      if (!requireAuth()) return;
+      const rows = await api('/api/v1/users/me/audit-logs?limit=80');
+      document.getElementById('auditOut').textContent = rows.map(x => x.created_at + ' ' + x.action + ' ' + x.detail_json).join('\n');
+    };
+
+    const DATA_RESET_SCOPES = [
+      { id: 'chat', label: '채팅(세션 전체)' },
+      { id: 'prompts', label: '질문목록(메시지만)' },
+      { id: 'topics', label: '토픽관리' },
+      { id: 'review_drafts', label: '검토·문서초안(에이전트 로그)' },
+      { id: 'embeddings', label: 'RAG 소스(문서·청크)' },
+      { id: 'logs', label: '로그(감사)' },
+      { id: 'api_keys', label: 'API 키' },
+    ];
+    (function setupDataReset() {
+      const grid = document.getElementById('dataResetGrid');
+      if (!grid) return;
+      DATA_RESET_SCOPES.forEach(({ id, label }) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn btn-secondary';
+        b.textContent = label;
+        b.onclick = async () => {
+          if (!requireAuth()) return;
+          if (!confirm('「' + label + '」데이터를 삭제할까요? 되돌릴 수 없습니다.')) return;
+          const out = document.getElementById('dataResetOut');
+          try {
+            const r = await api('/api/v1/users/me/data-reset', {
+              method: 'POST',
+              body: JSON.stringify({ scopes: [id] }),
+            });
+            if (out) out.textContent = JSON.stringify(r.detail || r, null, 2);
+            appLog('데이터 초기화 완료: ' + label);
+            if (id === 'embeddings') loadDocList().catch(() => {});
+            if (id === 'prompts' || id === 'topics' || id === 'chat') loadMyPrompts().catch(() => {});
+          } catch (e) {
+            if (out) out.textContent = e.message || '실패';
+            appLog('초기화 실패: ' + e.message);
+          }
+        };
+        grid.appendChild(b);
+      });
+    })();
+
+    document.querySelector('.nav-btn[data-view="user"]').addEventListener('click', async () => {
+      if (!requireAuth()) {
+        document.getElementById('userJson').textContent = '로그인 필요';
+        return;
+      }
+      const uj = document.getElementById('userJson');
+      try {
+        const me = await api('/api/v1/users/me');
+        uj.textContent = JSON.stringify(me, null, 2);
+        await loadUserModelSettingsPanel();
+      } catch (e) {
+        uj.textContent = e.message || '사용자 정보를 불러오지 못했습니다.';
+      }
+    });
+
+    document.getElementById('btnClearAppLog').onclick = () => {
+      const el = document.getElementById('appLogPanel');
+      if (el) el.textContent = '';
+    };
+    document.querySelector('.nav-btn[data-view="logs"]').addEventListener('click', () => {
+      const el = document.getElementById('appLogPanel');
+      if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+    });
+
+    function markAppLaunchedAfterLeave() {
+      try {
+        if (localStorage.getItem(STORAGE_APP_MARK_LAUNCHED) !== '1') {
+          localStorage.setItem(STORAGE_APP_MARK_LAUNCHED, '1');
+        }
+      } catch (_e) {}
+    }
+    window.addEventListener('pagehide', markAppLaunchedAfterLeave);
+    window.addEventListener('beforeunload', markAppLaunchedAfterLeave);
+
+    loadThemeFromStorage();
+    await initConfig();
+    refreshComposerMode();
+    if (requireAuth()) loadUserModelSettingsPanel().catch(() => {});
+    if (demoUser && publicCfg.demo_user_header_allowed && !accessToken) {
+      document.getElementById('demoUserId').value = demoUser;
+      document.getElementById('loggedBar').style.display = 'block';
+      document.getElementById('userPill').textContent = '데모: ' + demoUser;
+      document.getElementById('loginForm').style.display = 'none';
+    }
+  </script>
+</body>
+</html>

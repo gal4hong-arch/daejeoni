@@ -1,0 +1,11 @@
+export type { LawMatch, LawSearchRawFn, LawType } from "./types.js";
+export { LawSearchError } from "./types.js";
+export { LAW_ALIAS_MAP, mergeAliases } from "./aliases.js";
+export { extractLawNames } from "./extractLawNames.js";
+export { normalizeLawName } from "./normalizeLawName.js";
+export { classifyLawType } from "./classifyLawType.js";
+export { collectLawHitsFromSearchJson } from "./collectHits.js";
+export { pickBestLaw } from "./pickBestLaw.js";
+export { searchLawFromAPI } from "./searchLawFromAPI.js";
+export { findRelatedLaws } from "./findRelatedLaws.js";
+export { buildLawLinksOutput } from "./buildLawLinksOutput.js";
