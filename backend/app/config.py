@@ -5,14 +5,17 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 _backend_root = Path(__file__).resolve().parent.parent
-load_dotenv(_backend_root / ".env")
+# 저장소 루트 .env(공통 키) → cap/backend/.env 가 최종 우선(배포·Supabase URL은 백엔드 쪽에 둠)
 load_dotenv()
+load_dotenv(_backend_root / ".env", override=True)
 
 
 class Settings:
     database_url: str
     fernet_key: str
     openai_api_key: str
+    anthropic_api_key: str
+    google_api_key: str
     legal_api_base_url: str
     law_go_kr_oc: str
     law_go_kr_base_url: str
@@ -36,6 +39,8 @@ class Settings:
         self.database_url = os.getenv("DATABASE_URL", "sqlite:///./data/platform.db")
         self.fernet_key = os.getenv("FERNET_KEY", "")
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        self.google_api_key = (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
         self.legal_api_base_url = os.getenv("LEGAL_API_BASE_URL", "")
         self.law_go_kr_oc = os.getenv("LAW_GO_KR_OC", "")
         self.law_go_kr_base_url = os.getenv("LAW_GO_KR_BASE_URL", "https://www.law.go.kr/DRF/lawSearch.do")
@@ -93,6 +98,25 @@ class Settings:
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def normalize_database_url(url: str) -> str:
+    """Postgres(Supabase 등) 연결 시 SSL이 빠져 있으면 sslmode=require 를 붙인다."""
+    u = (url or "").strip()
+    if not u:
+        return u
+    low = u.lower()
+    if not (low.startswith("postgresql") or low.startswith("postgres:")):
+        return u
+    if "sslmode=" in low:
+        return u
+    sep = "&" if "?" in u else "?"
+    return f"{u}{sep}sslmode=require"
+
+
+def get_database_url() -> str:
+    """SQLAlchemy 엔진용 URL (Postgres는 SSL 보강)."""
+    return normalize_database_url(get_settings().database_url)
 
 
 def ensure_data_dir(url: str) -> None:

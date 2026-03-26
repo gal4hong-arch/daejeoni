@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>행정 AI — RAG</title>
+  <title>행정 AI, Daejeoni</title>
   <style>
     :root {
       --bg: #0f1419; --panel: #16181c; --border: #38444d; --text: #e7e9ea;
@@ -121,13 +121,14 @@
       min-width: 0;
       flex-shrink: 0;
     }
-    .chat-logo-placeholder {
-      width: 2rem;
-      height: 2rem;
-      border-radius: 8px;
-      border: 1px dashed var(--border);
-      background: color-mix(in srgb, var(--panel) 80%, var(--accent));
+    .chat-logo {
+      height: 2.25rem;
+      width: auto;
+      max-width: min(16rem, 42vw);
+      object-fit: contain;
+      object-position: left center;
       flex-shrink: 0;
+      display: block;
     }
     .chat-service-name {
       font-weight: 700;
@@ -778,6 +779,14 @@
       font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
       color: var(--muted); margin-bottom: 0.15rem;
     }
+    .review-bubble-model-meta {
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--muted);
+      opacity: 0.92;
+      margin: -0.05rem 0 0.35rem;
+      line-height: 1.35;
+    }
     .roundtable-turn {
       border-left: 3px solid var(--accent);
       padding: 0.42rem 0.6rem 0.48rem 0.7rem;
@@ -1010,10 +1019,9 @@
           </div>
 
           <button type="button" class="nav-btn active" data-view="chat"><span class="nav-ico">💬</span><span class="nav-text">채팅</span></button>
-          <button type="button" class="nav-btn" data-view="review"><span class="nav-ico">✅</span><span class="nav-text">검토·문서 초안</span></button>
+          <button type="button" class="nav-btn" data-view="review"><span class="nav-ico">✅</span><span class="nav-text">문서 초안</span></button>
           <button type="button" class="nav-btn" data-view="rag"><span class="nav-ico">📚</span><span class="nav-text">RAG 소스</span></button>
           <button type="button" class="nav-btn" data-view="prompts-topics"><span class="nav-ico">🏷️</span><span class="nav-text">토픽·질문</span></button>
-          <button type="button" class="nav-btn" data-view="logs"><span class="nav-ico">📜</span><span class="nav-text">로그</span></button>
           <button type="button" class="nav-btn" data-view="user"><span class="nav-ico">👤</span><span class="nav-text">유저 정보</span></button>
         </div>
       </div>
@@ -1024,8 +1032,8 @@
         <header class="chat-app-header" aria-label="앱 상단">
           <div class="chat-app-header-inner">
             <div class="chat-brand-block">
-              <span class="chat-logo-placeholder" title="로고 예정"></span>
-              <span class="chat-service-name">행정 AI</span>
+              <img class="chat-logo" src="대전광역시.png" alt="대전광역시" decoding="async" />
+              <span class="chat-service-name">행정 AI, Daejeoni</span>
             </div>
             <div class="theme-toolbar">
               <button type="button" class="theme-btn" id="themeBtnDark" data-theme-set="dark">다크</button>
@@ -1106,7 +1114,7 @@
               <dd>비우면 반영하지 않습니다. 적으면 보고서 작성(및 API 시뮬 체인)에 각도·쟁점으로 넘깁니다.</dd>
               <dt>서식 양식 파일</dt>
               <dd>
-                HWP·HWPX·DOC·DOCX를 드래그 앤 드롭(또는 클릭 선택)하면 텍스트를 추출해 목차·항목에 맞춰 본문을 채웁니다. 보고서 생성 시 항상 <b>작성 보강 → 상급자 검토 → 법령 점검</b> 순 3단 에이전트가 실행되며, 양식이 있으면 각 단계에 반영됩니다.
+                DOC·DOCX를 드래그 앤 드롭(또는 클릭 선택)하면 텍스트를 추출해 목차·항목에 맞춰 본문을 채웁니다. 보고서 생성 시 항상 <b>작성 보강 → 상급자 검토 → 법령 점검</b> 순 3단 에이전트가 실행되며, 양식이 있으면 각 단계에 반영됩니다.
               </dd>
               <dt>Word 다운로드</dt>
               <dd>양식을 사용해 생성한 경우(서버에서 양식 반영이 적용된 경우) <b>Word로 다운로드</b>로 양식에 맞춘 작성(보강) 본문을 .docx로 받을 수 있습니다.</dd>
@@ -1118,7 +1126,7 @@
             style="min-height:52px;width:100%;box-sizing:border-box;margin-bottom:0.45rem;"
             placeholder="예: 예산 삭감 압박, 특정 조례 적용 여부, 의회 질문 방향…"
           ></textarea>
-          <label style="font-size:0.82rem;color:var(--muted);display:block;margin:0 0 0.2rem;">보고서 서식 파일 (선택 · HWP, HWPX, DOC, DOCX)</label>
+          <label style="font-size:0.82rem;color:var(--muted);display:block;margin:0 0 0.2rem;">보고서 서식 파일 (선택 · DOC, DOCX)</label>
           <div
             id="reportTemplateDropZone"
             class="rag-file-drop-zone"
@@ -1128,7 +1136,7 @@
           >
             <div id="reportTemplateDropZoneIdle">
               양식을 여기에 놓거나 클릭하여 선택<br />
-              <span style="font-size:0.74rem;opacity:0.92;">HWP · HWPX · DOC · DOCX</span>
+              <span style="font-size:0.74rem;opacity:0.92;">DOC · DOCX</span>
             </div>
             <div id="reportTemplateDropZoneReady" style="display: none;">
               <div class="rag-drop-zone-ready-label">양식 선택됨 · 보고서 생성 시 사용</div>
@@ -1139,7 +1147,7 @@
           <input
             type="file"
             id="reportTemplateFile"
-            accept=".hwp,.hwpx,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;"
             aria-hidden="true"
           />
@@ -1280,19 +1288,6 @@
         </div>
       </div>
 
-      <div class="view panel-host" id="view-logs">
-        <div class="panel-body">
-          <p style="color:var(--muted);font-size:0.85rem;margin:0 0 0.5rem;">
-            <b>이 패널</b>에만 로그인·세션·RAG·키 저장 등 동작 기록과 <b>답변 메타</b>(intent·토픽·모델)가 쌓입니다.
-            채팅 화면의 「로그」 토글은 <b>해당 질문</b>의 전송·응답·법령 API 진행 줄만 보여 줍니다(세션 목록 갱신 등은 여기서만).
-          </p>
-          <div style="display:flex;gap:0.35rem;flex-wrap:wrap;margin-bottom:0.5rem;">
-            <button type="button" class="btn btn-secondary btn-sm" id="btnClearAppLog">로그 비우기</button>
-          </div>
-          <pre id="appLogPanel" class="app-log-panel" aria-label="앱 로그"></pre>
-        </div>
-      </div>
-
       <div class="view" id="view-user">
         <div class="panel-body">
           <div class="user-account-card">
@@ -1330,6 +1325,7 @@
             <summary style="cursor:pointer;font-weight:600;font-size:0.88rem;">API 키 입력·변경</summary>
             <p style="font-size:0.75rem;color:var(--muted);margin:0.45rem 0 0.5rem;line-height:1.4;">
               서버에 암호화 저장됩니다. <b>입력한 항목만</b> 갱신되며, 비운 채로 저장하면 해당 제공자 키는 요청에 포함되지 않습니다.
+              <b>OpenAI·Anthropic·Google 중 2개 이상</b>일 때 채팅에서 <b>대화 모드</b>를 켠 상태로 아래 「채팅·기본 응답 모델」을 바꾸면, 보고자/검토자에 쓰는 <b>메인·서브 모델이 전환</b>됩니다.
             </p>
             <label>OpenAI</label>
             <input type="password" id="userKeyOpenai" autocomplete="off" placeholder="sk-…" />
@@ -1344,24 +1340,15 @@
           </p>
           <label>채팅·기본 응답 모델</label>
           <select id="modelChatSelect" style="width:100%;margin-top:0.2rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
+          <p style="font-size:0.76rem;color:var(--muted);margin:0.4rem 0 0;line-height:1.45;">
+            채팅에서 <b>대화 모드</b>가 켜진 상태에서 여기서 모델을 바꿀 때마다(API 키 2개 이상일 때) 보고자·검토자에 배정되는 <b>메인·서브</b>가 전환됩니다. 「모델 설정 저장」으로 서버에 반영하세요.
+          </p>
 
-          <details style="margin:0.85rem 0;border:1px solid var(--border);border-radius:10px;padding:0.55rem 0.75rem;">
-            <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;">작업별 모델 (선택)</summary>
-            <p style="color:var(--muted);font-size:0.8rem;margin:0.45rem 0 0.5rem;">비워 두면 위 기본 모델을 사용합니다.</p>
-            <label>보고서 (report)</label>
-            <select id="modelTask_report" class="model-task-select" style="width:100%;margin-top:0.2rem;margin-bottom:0.45rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
-            <label>공문 (memo)</label>
-            <select id="modelTask_memo" class="model-task-select" style="width:100%;margin-top:0.2rem;margin-bottom:0.45rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
-            <label>설명자료 (explanation)</label>
-            <select id="modelTask_explanation" class="model-task-select" style="width:100%;margin-top:0.2rem;margin-bottom:0.45rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
-            <label>의회 답변 (council)</label>
-            <select id="modelTask_council" class="model-task-select" style="width:100%;margin-top:0.2rem;margin-bottom:0.45rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
-            <label>시뮬레이션 (simulation)</label>
-            <select id="modelTask_simulation" class="model-task-select" style="width:100%;margin-top:0.2rem;padding:0.45rem 0.55rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;"></select>
-          </details>
-
-          <button type="button" class="btn btn-primary btn-sm" id="btnSaveModels">모델 설정 저장</button>
-          <button type="button" class="btn btn-secondary btn-sm" id="btnLoadModels">모델 설정 불러오기</button>
+          <div style="display:flex;flex-wrap:wrap;gap:0.35rem;align-items:center;margin-top:0.75rem;">
+            <button type="button" class="btn btn-primary btn-sm" id="btnSaveModels">모델 설정 저장</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnLoadModels">모델 설정 불러오기</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnClearUserApiKeys" title="DB에 저장된 사용자 API 키만 삭제합니다">API 키 초기화</button>
+          </div>
           <hr style="border-color:var(--border);margin:1rem 0;" />
           <div class="sb-section-title">데이터 초기화</div>
           <p style="font-size:0.78rem;color:var(--muted);margin:0 0 0.35rem;line-height:1.45;">
@@ -1371,7 +1358,18 @@
           <p id="dataResetOut" style="font-size:0.78rem;color:var(--muted);margin:0.35rem 0 0;"></p>
           <hr style="border-color:var(--border);margin:1rem 0;" />
           <pre id="userJson" style="font-size:0.85rem;color:var(--muted);"></pre>
-          <button type="button" class="btn btn-secondary btn-sm" id="btnLoadAudit">감사 로그</button>
+          <hr style="border-color:var(--border);margin:1rem 0;" />
+          <div class="sb-section-title" style="margin-top:0;">앱 로그</div>
+          <p style="font-size:0.78rem;color:var(--muted);margin:0 0 0.35rem;line-height:1.45;">
+            채팅 말풍선 아래 「로그」토글은 해당 질문의 전송·응답·법령 API 줄만 보여 줍니다. 아래는 서버에 저장된 <b>감사 로그</b>를 불러와 표시합니다.
+          </p>
+          <div style="display:flex;gap:0.35rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+            <button type="button" class="btn btn-secondary btn-sm" id="btnLoadAppLog">로그 불러오기</button>
+          </div>
+          <pre id="appLogPanel" class="app-log-panel" aria-label="앱 로그" style="max-height:min(240px,40vh);"></pre>
+          <hr style="border-color:var(--border);margin:1rem 0;" />
+          <div class="sb-section-title" style="margin-top:0;">감사 로그</div>
+          <button type="button" class="btn btn-secondary btn-sm" id="btnLoadAudit">감사 로그 불러오기</button>
           <pre id="auditOut" style="margin-top:0.5rem;font-size:0.75rem;color:var(--muted);max-height:200px;overflow:auto;"></pre>
           <p style="font-size:0.8rem;color:var(--muted);">소스 등록·RAG 검색의 벡터 단계는 OpenAI 키가 있을 때 결합됩니다.</p>
         </div>
@@ -1459,7 +1457,7 @@
     let reporterReplyHistory = [];
     /** 검토자 의견 전체(패널에 표시된 순, 최대 5) — DB에 없어 클라이언트가 유지. */
     let reviewerOpinionHistory = [];
-    /** 검토·보고서 양식 파일(선택, HWP/HWPX/DOC/DOCX). */
+    /** 검토·보고서 양식 파일(선택, DOC/DOCX). */
     let reportTemplateFile = null;
 
     const REVIEW_ROLE_CATALOG = {
@@ -1477,6 +1475,15 @@
       ],
     };
 
+    /** 서버 review_chat._REVIEWER_INTENT_APPENDIX 와 동일 */
+    const REVIEWER_INTENT_APPENDIX =
+      '\n\n【보고자 메시지 의도】\n' +
+      '보고자(사용자)가 보낸 메시지·질의의 **의도**를 먼저 파악한다: ' +
+      '예) 정보·근거 요청, 확인·승인 필요, 반박·재검토 요청, 추가 설명·정정, 일정·협조·긴급 대응, 단순 진행 공유 등.\n' +
+      '그 의도에 맞춰 질문·지적·답변의 초점을 맞춘다. 의도와 무관한 틀에 박힌 검토 문장만 반복하지 않는다.\n' +
+      '보고자가 질문했다면 그에 직접 답하거나, 역할상 답할 수 없으면 한계를 밝히고 실무적으로 다음 조치를 안내한다.\n' +
+      '대화 턴의 연속성을 유지하고, 보고자가 기대하는 소통 방식(간결·상세·격식 등)에 가능한 한 맞춘다.';
+
     function defaultReviewPersonaText(roleId) {
       const row = REVIEW_ROLE_CATALOG[roleId];
       if (!row) return '';
@@ -1485,7 +1492,8 @@
       return (
         `너는 ${title} 역할을 수행하는 검토자다.\n${hint}\n` +
         '한국어로만 답한다. 주어진 **보고 내용** 또는 **최근 질의·답변**을 근거로 ' +
-        '검토 의견·질문·보완점을 5문단 이내로 제시한다. 과장·허위 사실은 금지다.'
+        '검토 의견·질문·보완점을 5문단 이내로 제시한다. 과장·허위 사실은 금지다.' +
+        REVIEWER_INTENT_APPENDIX
       );
     }
 
@@ -1677,7 +1685,7 @@
       if (f) f.innerHTML = '';
     }
 
-    function appendReviewerBubble(text, roleId, isError) {
+    function appendReviewerBubble(text, roleId, isError, modelUsed) {
       const log = getReviewerLogFlow();
       if (!log) return;
       const label = reviewerBannerLabelForRole(roleId);
@@ -1700,6 +1708,13 @@
         }
       }
       d.appendChild(banner);
+      const metaLine = !isError && modelUsed ? formatReviewDialogueModelLine(modelUsed) : '';
+      if (metaLine) {
+        const meta = document.createElement('div');
+        meta.className = 'review-bubble-model-meta';
+        meta.textContent = metaLine;
+        d.appendChild(meta);
+      }
       d.appendChild(body);
       appendBubbleCopyRow(d, text || '');
       log.appendChild(d);
@@ -1711,7 +1726,7 @@
       requestAnimationFrame(() => requestAnimationFrame(scrollEnd));
     }
 
-    function appendReporterBubble(bannerText, text) {
+    function appendReporterBubble(bannerText, text, modelUsed) {
       const log = getChatLogFlow();
       if (!log) return;
       const d = document.createElement('div');
@@ -1729,6 +1744,13 @@
         }
       }
       d.appendChild(banner);
+      const metaLine = modelUsed ? formatReviewDialogueModelLine(modelUsed) : '';
+      if (metaLine) {
+        const meta = document.createElement('div');
+        meta.className = 'review-bubble-model-meta';
+        meta.textContent = metaLine;
+        d.appendChild(meta);
+      }
       d.appendChild(body);
       appendBubbleCopyRow(d, text || '');
       log.appendChild(d);
@@ -1766,9 +1788,10 @@
             role_id: apiRoleIdForReview(roleId),
             system_prompt_override: override,
             reporter_brief: reviewReporterBrief,
+            ...priorReviewerOpinionsPayload(),
           }),
         });
-        appendReviewerBubble(res.answer, roleId, false);
+        appendReviewerBubble(res.answer, roleId, false, res.model_used);
         finalizePendingSuccess(pend);
       } catch (e) {
         appendReviewerBubble('검토 호출 실패: ' + e.message, roleId, true);
@@ -1843,6 +1866,10 @@
           legalEl.hidden = false;
           legalEl.removeAttribute('aria-hidden');
         }
+      }
+      if (on) {
+        const sel = document.getElementById('modelChatSelect');
+        if (sel) sel.dataset.lastPicked = String(sel.value || '').trim();
       }
       if (!on) {
         clearReviewerLog();
@@ -2185,6 +2212,8 @@
 
     /** RAG 문서 체크 상태 localStorage 키 접미사용(로그인 user_id). */
     let _ragUserIdForChecks = '';
+    /** 이중 API 시 대화 모드에서 기본 모델 변경 시 토글되어 저장되는 서버 필드와 동기화. */
+    let dualApiReporterSubFirstState = false;
 
     const MODEL_CATALOG = [
       { provider: 'openai', id: 'gpt-4o-mini', label: 'gpt-4o-mini' },
@@ -2198,13 +2227,11 @@
       { provider: 'google', id: 'gemini-3-flash-preview', label: 'Gemini 3.0 Flash' },
       { provider: 'google', id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     ];
-    const MODEL_TASK_MAP = [
-      ['report', 'modelTask_report'],
-      ['memo', 'modelTask_memo'],
-      ['explanation', 'modelTask_explanation'],
-      ['council', 'modelTask_council'],
-      ['simulation', 'modelTask_simulation'],
-    ];
+    /** 검토 패널에 이미 나온 의견(이번 생성 직전까지) — 서버에 검토 대화 맥락 전달 */
+    function priorReviewerOpinionsPayload() {
+      if (!reviewerOpinionHistory || !reviewerOpinionHistory.length) return {};
+      return { prior_reviewer_opinions: reviewerOpinionHistory.slice() };
+    }
 
     function providerLabelForModelId(modelId) {
       const id = String(modelId || '').trim();
@@ -2213,6 +2240,23 @@
       if (!m) return null;
       const map = { openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google Gemini' };
       return map[m.provider] || m.provider;
+    }
+
+    /** 카탈로그에 없는 모델 id(서버 기본값 등)용 공급사 추정 */
+    function inferProviderLabelForModelId(modelId) {
+      const s = String(modelId || '').toLowerCase();
+      if (!s) return null;
+      if (s.includes('claude') || s.startsWith('anthropic.')) return 'Anthropic';
+      if (s.includes('gemini') || s.startsWith('google/')) return 'Google Gemini';
+      return 'OpenAI';
+    }
+
+    /** 대화 모드 말풍선: 공급사 · 모델 id 한 줄 */
+    function formatReviewDialogueModelLine(modelId) {
+      const id = String(modelId || '').trim();
+      if (!id) return '';
+      const prov = providerLabelForModelId(id) || inferProviderLabelForModelId(id);
+      return prov + ' · ' + id;
     }
 
     function anyModelProvider(p) {
@@ -2278,15 +2322,6 @@
       }
     }
 
-    function fillTaskModelSelect(selectId, providers, current) {
-      const sel = document.getElementById(selectId);
-      appendModelOptionsToSelect(sel, providers, true);
-      if (!anyModelProvider(providers)) return;
-      const v = (current || '').trim();
-      if (v) ensureSelectHasValue(sel, v);
-      sel.value = v || '';
-    }
-
     function providersHaveAnyKey(p) {
       return !!(p && (p.openai || p.anthropic || p.google));
     }
@@ -2311,8 +2346,30 @@
         : '<span style="color:var(--warn);">저장된 사용자 키 없음</span> · 아래에서 입력하세요. (서버에 OPENAI_API_KEY만 있는 경우 OpenAI는 사용될 수 있습니다.)';
     }
 
+    function syncUserKeyInputsFromSettings(s) {
+      const usk = s.user_stored_keys || {};
+      const pairs = [
+        { id: 'userKeyOpenai', phEmpty: 'sk-…', phStored: '저장됨 — 새 키로 바꿀 때만 입력' },
+        { id: 'userKeyAnthropic', phEmpty: '선택', phStored: '저장됨 — 새 키로 바꿀 때만 입력' },
+        { id: 'userKeyGoogle', phEmpty: '선택', phStored: '저장됨 — 새 키로 바꿀 때만 입력' },
+      ];
+      pairs.forEach(({ id, phEmpty, phStored }) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const prov = id === 'userKeyOpenai' ? 'openai' : id === 'userKeyAnthropic' ? 'anthropic' : 'google';
+        if (usk[prov]) {
+          el.value = '';
+          el.placeholder = phStored;
+          el.dataset.userKeyStored = '1';
+        } else {
+          el.placeholder = phEmpty;
+          delete el.dataset.userKeyStored;
+        }
+      });
+    }
+
     async function loadUserModelSettingsPanel() {
-      if (!requireAuth()) return;
+      if (!requireAuth(true)) return;
       const s = await api('/api/v1/users/me/settings');
       const p = s.providers_with_keys || {};
       const firstMark = localStorage.getItem(STORAGE_APP_MARK_LAUNCHED) !== '1';
@@ -2327,12 +2384,11 @@
         ? '사용 가능: ' + bits.join(', ') + '. (서버에 OPENAI_API_KEY가 있으면 OpenAI도 사용 가능)'
         : '저장된 API 키가 없습니다. 위 「API 키 입력·변경」에서 키를 저장하면 모델을 고를 수 있습니다.';
 
-      const tm = s.task_models || {};
-      const chatVal = tm.chat ? tm.chat : (s.default_model || '');
-      fillChatModelSelect(p, chatVal);
-      for (const [key, sid] of MODEL_TASK_MAP) {
-        fillTaskModelSelect(sid, p, tm[key] || '');
-      }
+      fillChatModelSelect(p, s.default_model || '');
+      dualApiReporterSubFirstState = !!s.dual_api_reporter_sub_first;
+      const selModel = document.getElementById('modelChatSelect');
+      if (selModel) selModel.dataset.lastPicked = String(selModel.value || '').trim();
+      syncUserKeyInputsFromSettings(s);
       updateCurrentChatModelBanner();
     }
 
@@ -2357,7 +2413,7 @@
       document.querySelectorAll('#docCheckList .rag-doc-row.selected').forEach(row => {
         if (row.dataset.docId) ids.push(row.dataset.docId);
       });
-      return ids.length ? ids : null;
+      return ids;
     }
 
     function ragDocChecksStorageKey() {
@@ -2882,7 +2938,9 @@
         } else {
           showLoggedOut();
         }
-        supabase.auth.onAuthStateChange((_e, session) => {
+        supabase.auth.onAuthStateChange((event, session) => {
+          /* getSession() 직후 동일 세션으로 INITIAL_SESSION 이 한 번 더 올라와 showLoggedIn·settings 요청이 중복됨 */
+          if (event === 'INITIAL_SESSION') return;
           accessToken = session?.access_token || null;
           if (session) {
             showLoggedIn(session.user.email || session.user.id);
@@ -2973,9 +3031,10 @@
       loadUserModelSettingsPanel().catch(() => {});
     };
 
-    function requireAuth() {
+    /** @param {boolean} [silent] true면 미인증 시 appLog 생략(페이지 로드·패널 갱신 등) */
+    function requireAuth(silent) {
       if (accessToken || (demoUser && publicCfg.demo_user_header_allowed)) return true;
-      appLog('로그인 또는 데모 사용자 설정이 필요합니다.');
+      if (!silent) appLog('로그인 또는 데모 사용자 설정이 필요합니다.');
       return false;
     }
 
@@ -3141,9 +3200,10 @@
                 role_id: apiRoleIdForReview(roleId),
                 system_prompt_override: override,
                 reporter_brief: (reviewReporterBrief || '').trim() || null,
+                ...priorReviewerOpinionsPayload(),
               }),
             });
-            appendReviewerBubble(resRev.answer, roleId, false);
+            appendReviewerBubble(resRev.answer, roleId, false, resRev.model_used);
             pendingLogPush(pendingRev, '검토 응답 수신');
             revOk = true;
           } catch (revErr) {
@@ -3174,6 +3234,7 @@
             ' → 답변에 넣은 청크 ' +
             (rag.chunks_in_prompt != null ? rag.chunks_in_prompt : '?');
           if (rag.filter_by_documents_only) tline += ' (선택문서만 검색)';
+          if (rag.skipped_no_selection) tline += ' · RAG 검색 생략(소스 미선택)';
           pendingLogPush(pendingState, tline);
           if (rag.top_source_titles && rag.top_source_titles.length) {
             pendingLogPush(pendingState, '  · 상위 출처: ' + rag.top_source_titles.slice(0, 4).join(' | '));
@@ -3553,9 +3614,9 @@
         finalizePendingSuccess(pendRev);
         reporterReplyHistory = [];
         reviewerOpinionHistory = [];
-        appendReporterBubble('요약 보고', res.report);
+        appendReporterBubble('요약 보고', res.report, res.reporter_model_used || '');
         reviewReporterBrief = res.report;
-        appendReviewerBubble(res.review, roleId, false);
+        appendReviewerBubble(res.review, roleId, false, res.reviewer_model_used || '');
         reviewSessionPrimed = true;
       } catch (e) {
         pendingLogPush(pendRep, '오류: ' + e.message);
@@ -3570,8 +3631,10 @@
     document.getElementById('btnReporterReply').onclick = async () => {
       if (!requireAuth() || !currentStreamId) return;
       const op = (lastReviewerOpinion || '').trim();
-      if (!op) {
-        appLog('검토자 의견이 없습니다. 먼저 검토가 생성되었는지 확인하세요.');
+      const composerEl = document.getElementById('chatMsg');
+      const composerText = (composerEl && composerEl.value ? composerEl.value : '').trim();
+      if (!op && !composerText) {
+        appLog('채팅창에 답할 내용을 입력하거나, 검토자 의견이 있어야 합니다.');
         return;
       }
       const roleId = getActiveReviewRoleId();
@@ -3599,12 +3662,14 @@
           method: 'POST',
           body: JSON.stringify({
             reviewer_opinion: op,
+            composer_prompt: composerText || null,
             reporter_brief: reviewReporterBrief || null,
             ...priorRep,
             ...priorRev,
           }),
         });
-        appendReporterBubble('보고자 답변', res.reply);
+        if (composerEl) composerEl.value = '';
+        appendReporterBubble('보고자 답변', res.reply, res.model_used);
         pendingLogPush(pendRep, '보고자 답변 수신');
         finalizePendingSuccess(pendRep);
         pendRep = null;
@@ -3615,6 +3680,8 @@
           doneLabel: '검토자 답변 완료',
         });
         pendingLogPush(pendRev, '검토자 재검토 요청…');
+        const earlierRev =
+          reviewerOpinionHistory.length > 1 ? reviewerOpinionHistory.slice(0, -1) : null;
         const resRev = await api('/api/v1/streams/auth/' + currentStreamId + '/review-turn', {
           method: 'POST',
           body: JSON.stringify({
@@ -3623,10 +3690,12 @@
             reporter_brief: (reviewReporterBrief || '').trim() || null,
             prior_reviewer_opinion: op,
             reporter_reply_followup: res.reply,
+            composer_prompt: composerText || null,
             ...priorRep,
+            ...(earlierRev && earlierRev.length ? { prior_reviewer_opinions: earlierRev } : {}),
           }),
         });
-        appendReviewerBubble(resRev.answer, roleId, false);
+        appendReviewerBubble(resRev.answer, roleId, false, resRev.model_used);
         pendingLogPush(pendRev, '검토자 답변 수신');
         finalizePendingSuccess(pendRev);
         pendRev = null;
@@ -3717,23 +3786,42 @@
       appLog('검토 역할을 저장했습니다.');
     };
 
+    function _trimInputOrNull(id) {
+      const el = document.getElementById(id);
+      if (!el) return null;
+      const v = (el.value || '').trim();
+      return v || null;
+    }
+
     async function saveLlmKeysFromInputs(ids) {
       if (!requireAuth()) return false;
       appLog('API 키 저장 시작…');
       const body = {
-        openai_api_key: document.getElementById(ids.openai).value || null,
-        anthropic_api_key: document.getElementById(ids.anthropic).value || null,
-        google_api_key: document.getElementById(ids.google).value || null,
+        openai_api_key: _trimInputOrNull(ids.openai),
+        anthropic_api_key: _trimInputOrNull(ids.anthropic),
+        google_api_key: _trimInputOrNull(ids.google),
       };
       if (!body.openai_api_key && !body.anthropic_api_key && !body.google_api_key) {
         appLog('저장할 키를 입력하세요.');
         return false;
       }
-      await api('/api/v1/users/me/llm-keys', { method: 'PUT', body: JSON.stringify(body) });
-      document.getElementById(ids.openai).value = '';
-      document.getElementById(ids.anthropic).value = '';
-      document.getElementById(ids.google).value = '';
-      appLog('API 키 저장 완료');
+      const out = await api('/api/v1/users/me/llm-keys', { method: 'PUT', body: JSON.stringify(body) });
+      const o = document.getElementById(ids.openai);
+      const a = document.getElementById(ids.anthropic);
+      const g = document.getElementById(ids.google);
+      if (o) o.value = '';
+      if (a) a.value = '';
+      if (g) g.value = '';
+      const pwk = out && out.providers_with_keys;
+      if (pwk) {
+        const bits = [];
+        if (pwk.openai) bits.push('OpenAI');
+        if (pwk.anthropic) bits.push('Anthropic');
+        if (pwk.google) bits.push('Google');
+        appLog('API 키 저장 완료 · 서버 인식: ' + (bits.length ? bits.join(', ') : '없음'));
+      } else {
+        appLog('API 키 저장 완료');
+      }
       await loadUserModelSettingsPanel();
       return true;
     }
@@ -4098,13 +4186,13 @@
           zone.classList.remove('dragover');
         }),
       );
-      const accept = f => f && /\.(hwp|hwpx|doc|docx)$/i.test(f.name);
+      const accept = f => f && /\.(doc|docx)$/i.test(f.name);
       zone.addEventListener('drop', e => {
         const fl = e.dataTransfer && e.dataTransfer.files;
         if (!fl || !fl.length) return;
         const f = fl[0];
         if (!accept(f)) {
-          appLog('양식은 HWP, HWPX, DOC, DOCX 만 지원합니다.');
+          appLog('양식은 DOC, DOCX 만 지원합니다.');
           return;
         }
         reportTemplateFile = f;
@@ -4124,7 +4212,7 @@
           return;
         }
         if (!accept(f)) {
-          appLog('양식은 HWP, HWPX, DOC, DOCX 만 지원합니다.');
+          appLog('양식은 DOC, DOCX 만 지원합니다.');
           inp.value = '';
           reportTemplateFile = null;
           syncReportTemplateDropZoneUI();
@@ -4252,16 +4340,12 @@
         appLog('채팅 모델을 선택할 수 없습니다. API 키를 먼저 저장하세요.');
         return;
       }
-      const tasks = {};
-      for (const [key, sid] of MODEL_TASK_MAP) {
-        const v = document.getElementById(sid).value.trim();
-        if (v) tasks[key] = v;
-      }
       await api('/api/v1/users/me/settings', {
         method: 'PUT',
         body: JSON.stringify({
           default_model: chatModel,
-          task_models: tasks,
+          task_models: {},
+          dual_api_reporter_sub_first: dualApiReporterSubFirstState,
         }),
       });
       appLog('모델 설정 저장됨');
@@ -4270,12 +4354,67 @@
 
     document.getElementById('btnLoadModels').onclick = () => loadUserModelSettingsPanel();
 
-    document.getElementById('modelChatSelect').addEventListener('change', () => updateCurrentChatModelBanner());
+    document.getElementById('btnClearUserApiKeys').onclick = async () => {
+      if (!requireAuth()) return;
+      if (!confirm('DB에 저장된 사용자 API 키를 모두 삭제합니다. 서버에 설정된 OPENAI 키는 그대로입니다. 계속할까요?')) return;
+      try {
+        await api('/api/v1/users/me/llm-keys', { method: 'DELETE' });
+        appLog('저장된 API 키를 삭제했습니다.');
+        await loadUserModelSettingsPanel();
+      } catch (e) {
+        appLog('API 키 초기화 실패: ' + e.message);
+      }
+    };
+
+    ['userKeyOpenai', 'userKeyAnthropic', 'userKeyGoogle'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('focus', () => {
+        if (el.dataset.userKeyStored === '1') {
+          el.placeholder = id === 'userKeyOpenai' ? 'sk-…' : '선택';
+        }
+      });
+    });
+
+    document.getElementById('modelChatSelect').addEventListener('change', () => {
+      const sel = document.getElementById('modelChatSelect');
+      const main = document.getElementById('chatMain');
+      if (sel && main && main.classList.contains('review-split')) {
+        const cur = String(sel.value || '').trim();
+        const prev = String(sel.dataset.lastPicked || '').trim();
+        if (prev && cur && cur !== prev) dualApiReporterSubFirstState = !dualApiReporterSubFirstState;
+      }
+      if (sel) sel.dataset.lastPicked = String(sel.value || '').trim();
+      updateCurrentChatModelBanner();
+    });
+
+    async function fetchAuditLogsDisplayText() {
+      const rows = await api('/api/v1/users/me/audit-logs?limit=80');
+      return rows.map(x => x.created_at + ' ' + x.action + ' ' + x.detail_json).join('\n');
+    }
 
     document.getElementById('btnLoadAudit').onclick = async () => {
       if (!requireAuth()) return;
-      const rows = await api('/api/v1/users/me/audit-logs?limit=80');
-      document.getElementById('auditOut').textContent = rows.map(x => x.created_at + ' ' + x.action + ' ' + x.detail_json).join('\n');
+      try {
+        const out = document.getElementById('auditOut');
+        if (out) out.textContent = await fetchAuditLogsDisplayText();
+      } catch (e) {
+        appLog('감사 로그 불러오기 실패: ' + e.message);
+      }
+    };
+
+    document.getElementById('btnLoadAppLog').onclick = async () => {
+      if (!requireAuth()) return;
+      try {
+        const el = document.getElementById('appLogPanel');
+        if (el) el.textContent = await fetchAuditLogsDisplayText();
+        requestAnimationFrame(() => {
+          const logEl = document.getElementById('appLogPanel');
+          if (logEl) logEl.scrollTop = logEl.scrollHeight;
+        });
+      } catch (e) {
+        appLog('로그 불러오기 실패: ' + e.message);
+      }
     };
 
     const DATA_RESET_SCOPES = [
@@ -4330,15 +4469,8 @@
       } catch (e) {
         uj.textContent = e.message || '사용자 정보를 불러오지 못했습니다.';
       }
-    });
-
-    document.getElementById('btnClearAppLog').onclick = () => {
-      const el = document.getElementById('appLogPanel');
-      if (el) el.textContent = '';
-    };
-    document.querySelector('.nav-btn[data-view="logs"]').addEventListener('click', () => {
-      const el = document.getElementById('appLogPanel');
-      if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+      const logEl = document.getElementById('appLogPanel');
+      if (logEl) requestAnimationFrame(() => { logEl.scrollTop = logEl.scrollHeight; });
     });
 
     function markAppLaunchedAfterLeave() {
@@ -4354,7 +4486,7 @@
     loadThemeFromStorage();
     await initConfig();
     refreshComposerMode();
-    if (requireAuth()) loadUserModelSettingsPanel().catch(() => {});
+    if (requireAuth(true)) loadUserModelSettingsPanel().catch(() => {});
     if (demoUser && publicCfg.demo_user_header_allowed && !accessToken) {
       document.getElementById('demoUserId').value = demoUser;
       document.getElementById('loggedBar').style.display = 'block';

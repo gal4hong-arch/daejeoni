@@ -25,6 +25,20 @@ class LawResolutionTests(unittest.TestCase):
             normalize_law_name("지방계약법"),
             "지방자치단체를 당사자로 하는 계약에 관한 법률",
         )
+        self.assertEqual(normalize_law_name("헌법"), "대한민국헌법")
+        self.assertEqual(normalize_law_name("대한민국헌법"), "대한민국헌법")
+
+    def test_pick_constitution_not_flag_act(self) -> None:
+        """대한민국헌법 질의에서 대한민국국기법으로 오매칭되지 않는다."""
+        hits = [
+            LawMatch("대한민국국기법", "010381", "법"),
+            LawMatch("대한민국헌법", "000000", "법"),
+            LawMatch("종합부동산세법", "009873", "법"),
+        ]
+        best = pick_best_law(hits, "대한민국헌법")
+        self.assertIsNotNone(best)
+        assert best is not None
+        self.assertEqual(best.law_id, "000000")
 
     def test_extract_law_names(self) -> None:
         t = "국가계약법에 따라 국가를 당사자로 하는 계약에 관한 법률 시행령을 봅니다."

@@ -1,4 +1,4 @@
-"""법령 라우팅 시 사용자 프롬프트에 법령 블록이 RAG 앞에 오는지 확인."""
+"""법령 라우팅 시 사용자 프롬프트에 내부 문서(RAG) 블록이 법령 발췌 앞에 오는지 확인."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from app.services.law_go_kr.types import LegalFetchResult  # noqa: E402
 from app.services.retrieval import RetrievedChunk  # noqa: E402
 
 
-def test_legal_routed_puts_legal_block_before_internal_rag() -> None:
+def test_legal_routed_puts_internal_rag_before_legal_block() -> None:
     legal = LegalFetchResult(
         text="LAW_BLOCK_UNIQUE_MARKER",
         raw_json="{}",
@@ -52,4 +52,4 @@ def test_legal_routed_puts_legal_block_before_internal_rag() -> None:
     pos_law = u.find("LAW_BLOCK_UNIQUE_MARKER")
     pos_rag = u.find("내부 문서 발췌")
     assert pos_law != -1 and pos_rag != -1
-    assert pos_law < pos_rag
+    assert pos_rag < pos_law

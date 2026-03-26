@@ -6,12 +6,12 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import ensure_data_dir, get_settings
+from app.config import ensure_data_dir, get_database_url, get_settings
 from app.db.session import init_db
 from app.routers import api_router
 
 settings = get_settings()
-ensure_data_dir(settings.database_url)
+ensure_data_dir(get_database_url())
 init_db()
 
 _log = logging.getLogger("uvicorn.error")

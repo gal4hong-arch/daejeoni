@@ -23,5 +23,6 @@ def test_build_review_system_prompt_uses_catalog_per_role() -> None:
 def test_build_review_system_prompt_override_wins() -> None:
     custom = "【테스트】오직 이 문구만 시스템으로 쓴다."
     out = build_review_system_prompt("supervisor", custom)
-    assert out == custom
+    assert out.startswith(custom)
+    assert "보고자 메시지 의도" in out
     assert "상급자" not in out

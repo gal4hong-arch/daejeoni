@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Self
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
 
 
 class StreamCreate(BaseModel):
@@ -41,14 +42,20 @@ class ChatRequest(BaseModel):
     content: str = Field(..., min_length=1)
     use_legal: bool = False
     task: str = Field(default="chat", description="chat | report | memo | simulation")
-    document_ids: list[str] | None = None
+    document_ids: list[str] | None = Field(
+        default=None,
+        description="검색에 사용할 kb_documents id. 빈 배열이면 RAG 생략. null이면 전체 후보 풀.",
+    )
 
 
 class ChatRequestAuth(BaseModel):
     content: str = Field(..., min_length=1)
     use_legal: bool = False
     task: str = Field(default="chat", description="chat | report | memo | simulation")
-    document_ids: list[str] | None = Field(default=None, description="검색에 사용할 kb_documents id 목록")
+    document_ids: list[str] | None = Field(
+        default=None,
+        description="검색에 사용할 kb_documents id 목록. 빈 배열이면 RAG 검색을 하지 않음. 생략·null이면 전체 후보 풀에서 검색.",
+    )
     skip_assistant: bool = Field(
         default=False,
         description="True면 사용자 메시지만 저장·토픽 라우팅하고 행정 AI 답변은 생성하지 않음(분할 검토 모드용).",
@@ -138,11 +145,33 @@ class ReviewTurnRequestAuth(BaseModel):
         default=None,
         description="이전 보고자 답변들(시간순). 반복·진전 여부 판단용",
     )
+    prior_reviewer_opinions: list[str] | None = Field(
+        default=None,
+        description="검토 패널에 이미 표시된 검토자 의견(시간순). 대화 모드에서 보고자 수동 대화 시 맥락 유지.",
+    )
+    composer_prompt: str | None = Field(
+        default=None,
+        max_length=32000,
+        description="보고자 답변 직후 재검토: 사용자가 채팅창에 입력한 원문(검토 범위를 이에 한정할 때)",
+    )
 
     @field_validator("prior_reporter_replies", mode="before")
     @classmethod
     def _v_prior_reporter_replies_turn(cls, v: object) -> list[str] | None:
         return _normalize_prior_reporter_replies(v)
+
+    @field_validator("prior_reviewer_opinions", mode="before")
+    @classmethod
+    def _v_prior_reviewer_opinions_turn(cls, v: object) -> list[str] | None:
+        return _normalize_prior_reporter_replies(v)
+
+    @field_validator("composer_prompt")
+    @classmethod
+    def _strip_composer_prompt_turn(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
 
     @field_validator("role_id")
     @classmethod
@@ -155,7 +184,10 @@ class ReviewTurnRequestAuth(BaseModel):
 
 class ReviewTurnResponse(BaseModel):
     answer: str
-    model_used: str
+    model_used: str = Field(
+        ...,
+        description="검토 응답 생성에 실제 사용된 모델 id(서브 실패 시 메인으로 폴백된 값 포함)",
+    )
 
 
 class ReviewBootstrapRequestAuth(BaseModel):
@@ -175,10 +207,23 @@ class ReviewBootstrapResponse(BaseModel):
     report: str
     review: str
     model_used: str
+    reporter_model_used: str = Field(
+        default="",
+        description="요약 보고(보고자) 호출에 실제 사용된 모델 id",
+    )
+    reviewer_model_used: str = Field(
+        default="",
+        description="검토 의견(검토자) 호출에 실제 사용된 모델 id",
+    )
 
 
 class ReviewReporterReplyRequestAuth(BaseModel):
-    reviewer_opinion: str = Field(..., min_length=1, max_length=50000)
+    reviewer_opinion: str = Field(default="", max_length=50000)
+    composer_prompt: str | None = Field(
+        default=None,
+        max_length=32000,
+        description="채팅 입력창에 적은 내용 — 보고자 답변 생성의 핵심 근거로 사용",
+    )
     reporter_brief: str | None = Field(default=None, max_length=32000)
     prior_reporter_replies: list[str] | None = Field(
         default=None,
@@ -198,6 +243,14 @@ class ReviewReporterReplyRequestAuth(BaseModel):
     @classmethod
     def _v_prior_reviewer_opinions_rep(cls, v: object) -> list[str] | None:
         return _normalize_prior_reporter_replies(v)
+
+    @model_validator(mode="after")
+    def _need_reviewer_or_composer(self) -> Self:
+        ro = (self.reviewer_opinion or "").strip()
+        cp = (self.composer_prompt or "").strip()
+        if not ro and not cp:
+            raise ValueError("검토자 의견 또는 채팅 입력(composer_prompt) 중 하나는 필요합니다.")
+        return self
 
 
 class ReviewReporterReplyResponse(BaseModel):
@@ -376,18 +429,52 @@ class LLMKeysIn(BaseModel):
     anthropic_api_key: str | None = None
     google_api_key: str | None = None
 
+    @field_validator("openai_api_key", "anthropic_api_key", "google_api_key", mode="before")
+    @classmethod
+    def _strip_optional_keys(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        s = str(v).strip()
+        return s if s else None
+
+
+class LLMKeysPutOut(BaseModel):
+    status: str = "ok"
+    providers_with_keys: dict[str, bool] = Field(default_factory=dict)
+
 
 class UserSettingsIn(BaseModel):
     default_model: str = ""
-    task_models: dict[str, str] = Field(default_factory=dict)
+    task_models: dict[str, str] = Field(
+        default_factory=dict,
+        description="무시됨(호환용). 서버는 항상 빈 객체로 저장합니다.",
+    )
     openai_api_key: str | None = None
+    dual_api_reporter_sub_first: bool = Field(
+        default=False,
+        description="API 2개 이상일 때 True면 보고자=서브(저가)·검토자=메인(기본 모델)",
+    )
 
 
 class UserSettingsOut(BaseModel):
     user_id: str
     default_model: str
-    task_models: dict[str, str]
+    task_models: dict[str, str] = Field(
+        default_factory=dict,
+        description="항상 빈 객체(작업별 모델 기능 제거됨).",
+    )
+    dual_api_reporter_sub_first: bool = Field(
+        default=False,
+        description="API 2개 이상일 때 보고자/검토자에 메인·서브 모델을 뒤집기",
+    )
     providers_with_keys: dict[str, bool] = Field(
         default_factory=dict,
         description="openai/anthropic/google 사용 가능(저장된 키 또는 서버 OpenAI env)",
+    )
+    user_stored_keys: dict[str, bool] = Field(
+        default_factory=dict,
+        description="DB에 사용자가 저장한 키만 (서버 OPENAI_API_KEY는 openai에 반영되지 않음)",
     )

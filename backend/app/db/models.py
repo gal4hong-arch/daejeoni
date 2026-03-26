@@ -123,6 +123,7 @@ class UserModelPreference(Base):
     user_id = Column(String(128), primary_key=True)
     default_model = Column(String(128), nullable=False, default="")
     task_models_json = Column(Text, nullable=False, default="{}")
+    dual_api_reporter_sub_first = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

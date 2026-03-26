@@ -65,7 +65,9 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 |------|------|
 | `DATABASE_URL` | 기본 `sqlite:///./data/platform.db` |
 | `FERNET_KEY` | Fernet 키 (미설정 시 개발용 임시 키; 운영에서는 반드시 고정 키) |
-| `OPENAI_API_KEY` | 답변·주제 LLM 보강 (없으면 검색 요약 모드) |
+| `OPENAI_API_KEY` | OpenAI (없으면 사용자 DB 저장 키 또는 기능 제한) |
+| `ANTHROPIC_API_KEY` | Claude(Anthropic) — 로컬·서버 공통, 비우면 사용자 저장 키만 |
+| `GOOGLE_API_KEY` | Gemini(Google). `GEMINI_API_KEY` 로 동일 지정 가능(별칭) |
 | `LAW_GO_KR_OC` | **국가법령정보 OC 인증값** (있으면 `www.law.go.kr/DRF/lawSearch.do` 호출). [가이드](https://open.law.go.kr/LSO/openApi/guideList.do) · [OC 변경](https://open.law.go.kr/LSO/usr/usrOcInfoMod.do) |
 | `LAW_GO_KR_BASE_URL` | 기본 `https://www.law.go.kr/DRF/lawSearch.do` |
 | `LAW_GO_KR_TARGET` / `LAW_GO_KR_TARGET_FALLBACK` | 기본 `aiSearch` → 실패 시 `law` 본문 검색(`search=2`) |
@@ -87,7 +89,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ## Supabase
 
 - **Auth**: 웹 UI가 `@supabase/supabase-js`로 회원가입/로그인 후 `access_token`을 API에 `Authorization: Bearer`로 붙입니다. `SUPABASE_JWT_SECRET`이 있으면 서명 검증, 없으면 로컬용으로 토큰 페이로드만 디코딩합니다.
-- **데이터 저장**: 멀티유저 영속 저장은 `DATABASE_URL`을 **Supabase Postgres 연결 문자열**로 두고 [../sql/supabase_schema.sql](../sql/supabase_schema.sql)을 적용한 뒤 사용하는 것을 권장합니다(`postgresql+psycopg2://...`).
+- **데이터 저장**: `DATABASE_URL`을 **Supabase Postgres** URI로 설정 (`postgresql+psycopg2://...`). 첫 기동 시 SQLAlchemy가 테이블을 생성합니다. **단계별·주의사항**은 [../sql/SUPABASE_SETUP.md](../sql/SUPABASE_SETUP.md) 참고. (참고용 DDL: [../sql/supabase_schema.sql](../sql/supabase_schema.sql))
 - **인증 API** (헤더: Bearer 또는 데모 시 `X-Demo-User`):
   - `POST/GET /api/v1/streams/auth`, `GET/DELETE /api/v1/streams/auth/{id}`, `GET/POST .../messages`, `POST .../auth/{stream_id}/roundtable` (역할 토의: `premise`, `roles`: `supervisor` \| `councilor` \| `citizen`)
   - `POST /api/v1/documents/chunks/auth`

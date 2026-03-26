@@ -27,6 +27,11 @@ from app.services.legal_adapter import (
 LAW_ALIAS_MAP: dict[str, str] = {
     "국가계약법": "국가를 당사자로 하는 계약에 관한 법률",
     "지방계약법": "지방자치단체를 당사자로 하는 계약에 관한 법률",
+    # 헌법: aiSearch·문자 유사도에서 「대한민국국기법」 등으로 오탐되기 쉬워 정식명으로 고정
+    "헌법": "대한민국헌법",
+    "대한민국 헌법": "대한민국헌법",
+    "한국헌법": "대한민국헌법",
+    "대한민국헌법": "대한민국헌법",
 }
 
 
@@ -176,6 +181,44 @@ def _iter_law_hit_dicts(node: Any) -> Any:
             yield from _iter_law_hit_dicts(it)
 
 
+def _dedupe_law_hits(hits: list[LawMatch]) -> list[LawMatch]:
+    """법령ID 기준 중복 제거(앞쪽 순서 유지)."""
+    seen: set[str] = set()
+    out: list[LawMatch] = []
+    for h in hits:
+        lid = (h.law_id or "").strip()
+        if not lid or lid in seen:
+            continue
+        seen.add(lid)
+        out.append(h)
+    return out
+
+
+def extract_lstrm_term_names(data: Any, *, limit: int = 6) -> list[str]:
+    """법령정보지식베이스 lstrmAI 응답에서 법령용어명 후보를 추출한다."""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if len(out) >= limit:
+            return
+        if isinstance(node, dict):
+            v = node.get("법령용어명") or node.get("용어명")
+            if isinstance(v, str):
+                s = re.sub(r"\s+", " ", v).strip()
+                if len(s) >= 2 and s not in seen:
+                    seen.add(s)
+                    out.append(s)
+            for x in node.values():
+                walk(x)
+        elif isinstance(node, list):
+            for x in node:
+                walk(x)
+
+    walk(data)
+    return out[:limit]
+
+
 def collect_law_hits_from_search_json(data: Any) -> list[LawMatch]:
     """lawSearch.do JSON에서 (법령명, ID, 유형) 목록을 중복 제거해 수집.
 
@@ -209,6 +252,22 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, _norm_compact(a), _norm_compact(b)).ratio()
 
 
+def _heuristic_law_name_mismatch(want_compact: str, hit_name: str) -> bool:
+    """「대한민국헌법」 질의가 「대한민국국기법」처럼 접두만 겹치는 법으로 잘못 고르는 것을 줄인다."""
+    h = _norm_compact(hit_name)
+    if not want_compact or not h:
+        return False
+    # 질의에 '헌법'이 분명한데 후보에 '헌법'이 없고 '국기'가 있으면 배제
+    if "헌법" in want_compact and "헌법" not in h:
+        if "국기" in h:
+            return True
+    # 반대로 국기법 질의에 헌법만 잡히는 경우
+    if "국기법" in want_compact or (want_compact.endswith("국기법") or "대한민국국기" in want_compact):
+        if "헌법" in h and "국기" not in h and "국기법" not in h:
+            return True
+    return False
+
+
 def pick_best_law(
     hits: list[LawMatch],
     target_name: str,
@@ -225,7 +284,16 @@ def pick_best_law(
     if not hits:
         return None
     want = _norm_compact(normalize_law_name(target_name))
-    exact = [h for h in hits if _norm_compact(h.law_name) == want]
+    pool = hits
+    # 대한민국헌법 등: 조문 검색 결과에 타 법이 많을 때 이름에 '헌법'이 있는 법을 우선
+    if "헌법" in want:
+        const_only = [h for h in hits if "헌법" in _norm_compact(h.law_name)]
+        if const_only:
+            pool = const_only
+    filtered = [h for h in pool if not _heuristic_law_name_mismatch(want, h.law_name)]
+    pool = filtered if filtered else pool
+
+    exact = [h for h in pool if _norm_compact(h.law_name) == want]
     if exact:
         laws = [h for h in exact if h.law_type == "법"]
         return laws[0] if laws else exact[0]
@@ -237,9 +305,15 @@ def pick_best_law(
         s = _similarity(h.law_name, norm_title)
         if uc:
             s = max(s, _similarity(h.law_name, uc))
+        # 제목이 질의를 부분 문자열로 포함하면(예: 대한민국헌법 ⊃ 헌법) 유사도만으로 밀리지 않게 가산
+        hc = _norm_compact(h.law_name)
+        if want and len(want) >= 4 and want in hc:
+            s = max(s, 0.95)
+        if want and len(want) >= 4 and hc in want:
+            s = max(s, 0.95)
         return s
 
-    best = max(hits, key=match_score)
+    best = max(pool, key=match_score)
     if match_score(best) < 0.38:
         return None
     return best
@@ -292,13 +366,16 @@ def search_law_from_api(
     user_query: str | None = None,
 ) -> LawMatch | None:
     """
-    1) 법령정보지식베이스 지능형 법령검색: lawSearch.do target=aiSearch (search 0·2 우선)
-    2) 폴백: 기존 target=law (법령명 문자열 검색)
+    1) lawSearch.do target=aiSearch: 조문 단위 히트를 모은 뒤 다른 소스와 합쳐 최적 1건 선택
+    2) target=eflaw, search=1, nw=3: 현행 법령 **명칭** 검색(제목 정확도 보강)
+    3) target=lstrmAI: 법령용어 후보 추출 → 각 용어로 eflaw 명칭 검색 보조
+    4) 폴백: target=law (법령명 문자열 검색)
     """
     if not oc or not (name or "").strip():
         return None
     base = (search_url or DEFAULT_LAW_SEARCH_URL).strip()
     qn = normalize_law_name(name.strip())
+    uq = (user_query or "").strip()[:200] or qn[:200]
 
     def _preview_text(t: str, n: int = 1500) -> str:
         t = t or ""
@@ -306,10 +383,19 @@ def search_law_from_api(
             return t
         return t[: n - 1].rstrip() + "…"
 
+    def _finalize_pick(pool: list[LawMatch]) -> LawMatch | None:
+        if not pool:
+            return None
+        picked = pick_best_law(pool, qn, user_context=user_query)
+        if picked:
+            return picked
+        return _pick_from_ai_search_hits(pool, qn, user_context=user_query)
+
     def run(c: httpx.Client) -> LawMatch | None:
         last_err: LawSearchError | None = None
+        merged_hits: list[LawMatch] = []
 
-        # --- 지능형 법령검색 API (aiSearch): 키워드·자연어 질의에 적합 ---
+        # --- (1) aiSearch: 모든 search 모드 히트를 합쳐 후보 풀 확대 ---
         for sm in ("0", "2", "1", "3"):
             params = {
                 "OC": oc.strip(),
@@ -355,20 +441,106 @@ def search_law_from_api(
                 continue
             hits = collect_law_hits_from_search_json(data)
             step["hit_count"] = len(hits)
-            picked = (
-                _pick_from_ai_search_hits(hits, qn, user_context=user_query)
-                if hits
-                else None
-            )
-            if picked:
-                step["picked_law_id"] = picked.law_id
-                step["picked_law_name"] = picked.law_name
-                if picked.mst:
-                    step["picked_law_mst"] = picked.mst
+            merged_hits.extend(hits)
+            step["merged_pool_size"] = len(_dedupe_law_hits(merged_hits))
             if search_debug is not None:
                 search_debug.append(step)
-            if picked:
-                return picked
+
+        merged_hits = _dedupe_law_hits(merged_hits)
+
+        # --- (2) eflaw 현행 법령 목록 · 법령명 검색 ---
+        ef_params = {
+            "OC": oc.strip(),
+            "target": "eflaw",
+            "type": "JSON",
+            "query": qn.strip()[:200],
+            "search": "1",
+            "nw": "3",
+            "display": "25",
+            "page": "1",
+        }
+        ef_step: dict[str, Any] = {
+            "phase": "lawSearch.do",
+            "target": "eflaw",
+            "query": qn[:200],
+            "note": "현행법령 목록·법령명 검색(nw=3)",
+        }
+        try:
+            r_ef = c.get(base.rstrip("/"), params=ef_params)
+            ef_step["request_url"] = str(r_ef.url)
+            ef_step["http_status"] = r_ef.status_code
+            if r_ef.status_code == 200:
+                try:
+                    d_ef = json.loads(r_ef.text or "")
+                    ef_hits = collect_law_hits_from_search_json(d_ef)
+                    ef_step["hit_count"] = len(ef_hits)
+                    merged_hits = _dedupe_law_hits(merged_hits + ef_hits)
+                    ef_step["merged_pool_size"] = len(merged_hits)
+                except json.JSONDecodeError:
+                    ef_step["error"] = "not_json"
+            else:
+                last_err = LawSearchError(f"HTTP {r_ef.status_code}")
+        except OSError as e:
+            ef_step["error"] = str(e)[:300]
+            last_err = LawSearchError(str(e))
+        if search_debug is not None:
+            search_debug.append(ef_step)
+
+        # --- (3) lstrmAI 법령용어 → 용어별 eflaw 명칭 검색 ---
+        ls_params = {
+            "OC": oc.strip(),
+            "target": "lstrmAI",
+            "type": "JSON",
+            "query": uq,
+            "display": "15",
+            "page": "1",
+        }
+        ls_step: dict[str, Any] = {
+            "phase": "lawSearch.do",
+            "target": "lstrmAI",
+            "query": uq,
+            "note": "법령정보지식베이스 법령용어",
+        }
+        try:
+            r_ls = c.get(base.rstrip("/"), params=ls_params)
+            ls_step["request_url"] = str(r_ls.url)
+            ls_step["http_status"] = r_ls.status_code
+            if r_ls.status_code == 200:
+                try:
+                    d_ls = json.loads(r_ls.text or "")
+                    terms = extract_lstrm_term_names(d_ls, limit=4)
+                    ls_step["terms_extracted"] = terms[:4]
+                    for term in terms[:2]:
+                        tp = {
+                            "OC": oc.strip(),
+                            "target": "eflaw",
+                            "type": "JSON",
+                            "query": term[:200],
+                            "search": "1",
+                            "nw": "3",
+                            "display": "15",
+                            "page": "1",
+                        }
+                        r_t = c.get(base.rstrip("/"), params=tp)
+                        if r_t.status_code != 200:
+                            continue
+                        try:
+                            d_t = json.loads(r_t.text or "")
+                            th = collect_law_hits_from_search_json(d_t)
+                            merged_hits = _dedupe_law_hits(merged_hits + th)
+                        except json.JSONDecodeError:
+                            continue
+                    ls_step["merged_pool_size_after_terms"] = len(merged_hits)
+                except json.JSONDecodeError:
+                    ls_step["error"] = "not_json"
+        except OSError as e:
+            ls_step["error"] = str(e)[:300]
+        if search_debug is not None:
+            search_debug.append(ls_step)
+
+        picked = _finalize_pick(merged_hits)
+        if picked:
+            return picked
 
         # --- 폴백: 일반 lawSearch (법령명 검색) ---
         for sm in ("1", "0", "2"):

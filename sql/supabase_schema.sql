@@ -62,9 +62,11 @@ CREATE TABLE user_model_preferences (
     user_id TEXT PRIMARY KEY,
     default_model TEXT NOT NULL DEFAULT '',
     task_models_json TEXT NOT NULL DEFAULT '{}',
+    dual_api_reporter_sub_first BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- 기존 DB: ALTER TABLE user_model_preferences ADD COLUMN IF NOT EXISTS dual_api_reporter_sub_first BOOLEAN NOT NULL DEFAULT false;
 
 -- RAG 문서 단위 (다중 문서 선택)
 CREATE TABLE kb_documents (

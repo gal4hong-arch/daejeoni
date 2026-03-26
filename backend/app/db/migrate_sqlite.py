@@ -31,6 +31,16 @@ def apply_sqlite_migrations(engine: Engine) -> None:
             if "entities_json" not in cols:
                 conn.execute(text("ALTER TABLE topic_classifications ADD COLUMN entities_json TEXT"))
 
+        if "user_model_preferences" in tables:
+            up_cols = {c["name"] for c in insp.get_columns("user_model_preferences")}
+            if "dual_api_reporter_sub_first" not in up_cols:
+                conn.execute(
+                    text(
+                        "ALTER TABLE user_model_preferences ADD COLUMN dual_api_reporter_sub_first "
+                        "BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
+
         if "kb_documents" in tables:
             dcols = {c["name"] for c in insp.get_columns("kb_documents")}
             if "source_kind" not in dcols:

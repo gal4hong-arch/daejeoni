@@ -1,7 +1,5 @@
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.auth_deps import get_current_user_id, get_current_user_profile
@@ -11,6 +9,7 @@ from app.db.models import AuditLog, UserApiKey, UserModelPreference
 from app.schemas.api import (
     AuditLogOut,
     LLMKeysIn,
+    LLMKeysPutOut,
     MeOut,
     UserDataResetIn,
     UserDataResetOut,
@@ -35,6 +34,14 @@ def _providers_with_keys(db: Session, user_id: str) -> dict[str, bool]:
     s = get_settings()
     return {
         "openai": bool((s.openai_api_key or "").strip()) or _has_stored_key(db, user_id, "openai"),
+        "anthropic": bool((s.anthropic_api_key or "").strip()) or _has_stored_key(db, user_id, "anthropic"),
+        "google": bool((s.google_api_key or "").strip()) or _has_stored_key(db, user_id, "google"),
+    }
+
+
+def _user_stored_keys_only(db: Session, user_id: str) -> dict[str, bool]:
+    return {
+        "openai": _has_stored_key(db, user_id, "openai"),
         "anthropic": _has_stored_key(db, user_id, "anthropic"),
         "google": _has_stored_key(db, user_id, "google"),
     }
@@ -42,19 +49,13 @@ def _providers_with_keys(db: Session, user_id: str) -> dict[str, bool]:
 
 def _load_user_settings(user_id: str, db: Session) -> UserSettingsOut:
     p = db.get(UserModelPreference, user_id)
-    tasks: dict[str, str] = {}
-    if p and p.task_models_json:
-        try:
-            raw = json.loads(p.task_models_json)
-            if isinstance(raw, dict):
-                tasks = {str(k): str(v) for k, v in raw.items()}
-        except json.JSONDecodeError:
-            pass
     return UserSettingsOut(
         user_id=user_id,
         default_model=p.default_model if p else "",
-        task_models=tasks,
+        task_models={},
+        dual_api_reporter_sub_first=bool(getattr(p, "dual_api_reporter_sub_first", False)) if p else False,
         providers_with_keys=_providers_with_keys(db, user_id),
+        user_stored_keys=_user_stored_keys_only(db, user_id),
     )
 
 
@@ -96,19 +97,20 @@ def update_me_settings(
         p = UserModelPreference(user_id=user_id)
         db.add(p)
     p.default_model = body.default_model
-    p.task_models_json = json.dumps(body.task_models, ensure_ascii=False)
+    p.task_models_json = "{}"
+    p.dual_api_reporter_sub_first = body.dual_api_reporter_sub_first
     if body.openai_api_key:
         _upsert_api_key(db, user_id, "openai", body.openai_api_key)
     db.commit()
     return _load_user_settings(user_id, db)
 
 
-@router.put("/me/llm-keys")
+@router.put("/me/llm-keys", response_model=LLMKeysPutOut)
 def update_me_llm_keys(
     body: LLMKeysIn,
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
-) -> dict[str, str]:
+) -> LLMKeysPutOut:
     if body.openai_api_key:
         _upsert_api_key(db, user_id, "openai", body.openai_api_key)
     if body.anthropic_api_key:
@@ -116,7 +118,18 @@ def update_me_llm_keys(
     if body.google_api_key:
         _upsert_api_key(db, user_id, "google", body.google_api_key)
     db.commit()
-    return {"status": "ok"}
+    return LLMKeysPutOut(status="ok", providers_with_keys=_providers_with_keys(db, user_id))
+
+
+@router.delete("/me/llm-keys", response_model=LLMKeysPutOut)
+def delete_me_llm_keys(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> LLMKeysPutOut:
+    """사용자가 DB에 저장한 API 키 전부 삭제(서버 OPENAI_API_KEY는 유지)."""
+    db.execute(delete(UserApiKey).where(UserApiKey.user_id == user_id))
+    db.commit()
+    return LLMKeysPutOut(status="ok", providers_with_keys=_providers_with_keys(db, user_id))
 
 
 @router.post("/me/data-reset", response_model=UserDataResetOut)
@@ -163,7 +176,8 @@ def update_user_settings(user_id: str, body: UserSettingsIn, db: Session = Depen
         p = UserModelPreference(user_id=user_id)
         db.add(p)
     p.default_model = body.default_model
-    p.task_models_json = json.dumps(body.task_models, ensure_ascii=False)
+    p.task_models_json = "{}"
+    p.dual_api_reporter_sub_first = body.dual_api_reporter_sub_first
     if body.openai_api_key:
         _upsert_api_key(db, user_id, "openai", body.openai_api_key)
     db.commit()

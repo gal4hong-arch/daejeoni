@@ -27,6 +27,9 @@ def _get_openai_key(db: Session, user_id: str) -> str | None:
 
 
 def _get_anthropic_key(db: Session, user_id: str) -> str | None:
+    s = get_settings()
+    if (s.anthropic_api_key or "").strip():
+        return s.anthropic_api_key.strip()
     row = (
         db.execute(select(UserApiKey).where(UserApiKey.user_id == user_id, UserApiKey.provider == "anthropic"))
         .scalar_one_or_none()
@@ -37,6 +40,9 @@ def _get_anthropic_key(db: Session, user_id: str) -> str | None:
 
 
 def _get_google_key(db: Session, user_id: str) -> str | None:
+    s = get_settings()
+    if (s.google_api_key or "").strip():
+        return s.google_api_key.strip()
     row = (
         db.execute(select(UserApiKey).where(UserApiKey.user_id == user_id, UserApiKey.provider == "google"))
         .scalar_one_or_none()
@@ -158,3 +164,70 @@ def chat_completion(
         messages=oa_messages,
     )
     return (r.choices[0].message.content or "").strip()
+
+
+def chat_completion_with_fallback(
+    db: Session,
+    *,
+    user_id: str,
+    primary_model: str,
+    fallback_model: str | None,
+    system: str,
+    user: str,
+    temperature: float = 0.3,
+    max_tokens: int = 8192,
+    conversation_history: list[tuple[str, str]] | None = None,
+) -> tuple[str, str]:
+    """검토자(서브) API 등 primary 실패·빈 응답 시 메인(fallback) 모델로 재시도. (본문, 실제 사용 모델 id) 반환."""
+    pm = (primary_model or "").strip()
+    fb = (fallback_model or "").strip()
+    if not fb or fb == pm:
+        out = chat_completion(
+            db,
+            user_id=user_id,
+            model=pm,
+            system=system,
+            user=user,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            conversation_history=conversation_history,
+        )
+        return out, pm
+
+    try:
+        out = chat_completion(
+            db,
+            user_id=user_id,
+            model=pm,
+            system=system,
+            user=user,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            conversation_history=conversation_history,
+        )
+    except Exception:
+        out = chat_completion(
+            db,
+            user_id=user_id,
+            model=fb,
+            system=system,
+            user=user,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            conversation_history=conversation_history,
+        )
+        return out, fb
+
+    if (out or "").strip():
+        return out, pm
+    out = chat_completion(
+        db,
+        user_id=user_id,
+        model=fb,
+        system=system,
+        user=user,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        conversation_history=conversation_history,
+    )
+    return out, fb

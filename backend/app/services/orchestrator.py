@@ -157,14 +157,20 @@ def process_chat(
     )
 
     rag_meta: dict = {}
-    chunks = hybrid_search(
-        db,
-        user_id=user_id,
-        query=content,
-        topic_session_id=route.topic_session_id,
-        document_ids=document_ids,
-        meta_out=rag_meta,
-    )
+    # document_ids == [] : RAG 소스 미선택 → 검색 생략. None : 기존처럼 전체 후보 풀.
+    rag_skipped_no_selection = document_ids is not None and len(document_ids) == 0
+    if rag_skipped_no_selection:
+        chunks = []
+        rag_meta = {"pool_size": 0, "document_ids_filter": False, "document_ids_count": 0, "skipped_no_selection": True}
+    else:
+        chunks = hybrid_search(
+            db,
+            user_id=user_id,
+            query=content,
+            topic_session_id=route.topic_session_id,
+            document_ids=document_ids,
+            meta_out=rag_meta,
+        )
     sources = [
         {
             "chunk_id": c.chunk_id,
@@ -292,6 +298,16 @@ def process_chat(
         record_law_hits(db, user_id, stats_refs)
 
     doc_ids_sent = document_ids if document_ids else []
+    rag_note = (
+        "RAG에서 문서를 하나도 선택하지 않아 내부 문서 검색을 건너뜁니다."
+        if rag_skipped_no_selection
+        else (
+            "문서를 지정하지 않으면(요청에 document_ids 없음) 본인·공유 RAG의 모든 청크를 후보로 두고, "
+            "BM25·벡터 점수 상위 N개(기본 약 8개)만 답변 근거로 넘어갑니다. "
+            "등록만 해 두었어도 다른 문서 청크가 더 높은 점수면 빠질 수 있습니다. "
+            "특정 자료만 쓰려면 RAG에서 해당 문서를 선택하세요."
+        )
+    )
     chat_trace = {
         "llm": {"model": model, "task": effective_task},
         "rag": {
@@ -299,13 +315,9 @@ def process_chat(
             "candidate_pool_chunks": rag_meta.get("pool_size", 0),
             "chunks_in_prompt": len(chunks),
             "filter_by_documents_only": rag_meta.get("document_ids_filter", False),
+            "skipped_no_selection": rag_skipped_no_selection,
             "top_source_titles": [c.source_title[:120] for c in chunks[:5]],
-            "note": (
-                "문서를 지정하지 않으면(선택 0개) 본인·공유 RAG의 모든 청크를 후보로 두고, "
-                "BM25·벡터 점수 상위 N개(기본 약 8개)만 답변 근거로 넘어갑니다. "
-                "등록만 해 두었어도 다른 문서 청크가 더 높은 점수면 빠질 수 있습니다. "
-                "특정 자료만 쓰려면 RAG에서 해당 문서를 선택하세요."
-            ),
+            "note": rag_note,
         },
         "legal": {
             "use_legal_requested": use_legal,

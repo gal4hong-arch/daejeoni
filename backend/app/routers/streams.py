@@ -25,7 +25,7 @@ from app.schemas.api import (
     UserPromptOut,
 )
 from app.security_stream import get_owned_stream
-from app.services.model_resolver import resolve_model
+from app.services.model_resolver import resolve_dialogue_reporter_reviewer_models, resolve_model
 from app.services.orchestrator import process_chat, process_chat_user_only
 from app.services.review_chat import (
     run_review_followup_on_reporter_reply,
@@ -244,15 +244,18 @@ def post_review_bootstrap_auth(
     """검토 패널 켤 때: 대화 요약 보고 → 검토자가 보고 기반 검토 (메시지 DB 미저장)."""
     get_owned_stream(db, stream_id, user_id)
     topic_id = _latest_topic_id_for_stream(db, stream_id)
-    model = resolve_model(db, user_id=user_id, topic_session_id=topic_id, task="chat")
+    reporter_model, reviewer_model = resolve_dialogue_reporter_reviewer_models(
+        db, user_id=user_id, topic_session_id=topic_id
+    )
     override = body.system_prompt_override
     if override is not None:
         override = override.strip() or None
     try:
-        report, review = run_review_bootstrap_pair(
+        report, review, rep_used, rev_used = run_review_bootstrap_pair(
             db,
             user_id=user_id,
-            model=model,
+            reporter_model=reporter_model,
+            reviewer_model=reviewer_model,
             stream_id=stream_id,
             role_id=body.role_id,
             system_prompt_override=override,
@@ -261,7 +264,13 @@ def post_review_bootstrap_auth(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not review.strip():
         raise HTTPException(status_code=502, detail="검토 응답이 비었습니다.")
-    return ReviewBootstrapResponse(report=report, review=review, model_used=model)
+    return ReviewBootstrapResponse(
+        report=report,
+        review=review,
+        model_used=f"보고자 {rep_used} | 검토자 {rev_used}",
+        reporter_model_used=rep_used,
+        reviewer_model_used=rev_used,
+    )
 
 
 @router.post("/auth/{stream_id}/review-reporter-reply", response_model=ReviewReporterReplyResponse)
@@ -274,18 +283,21 @@ def post_review_reporter_reply_auth(
     """보고자가 검토자 최신 의견에 한 번 답하는 초안 (DB 미저장)."""
     get_owned_stream(db, stream_id, user_id)
     topic_id = _latest_topic_id_for_stream(db, stream_id)
-    model = resolve_model(db, user_id=user_id, topic_session_id=topic_id, task="chat")
+    reporter_model, _ = resolve_dialogue_reporter_reviewer_models(
+        db, user_id=user_id, topic_session_id=topic_id
+    )
     brief = body.reporter_brief
     if brief is not None:
         brief = brief.strip() or None
     try:
-        reply = run_reporter_reply_to_reviewer(
+        reply, reply_model_used = run_reporter_reply_to_reviewer(
             db,
             user_id=user_id,
-            model=model,
+            model=reporter_model,
             stream_id=stream_id,
             reporter_brief=brief,
-            reviewer_opinion=body.reviewer_opinion.strip(),
+            reviewer_opinion=(body.reviewer_opinion or "").strip(),
+            composer_prompt=body.composer_prompt,
             prior_reporter_replies=body.prior_reporter_replies,
             prior_reviewer_opinions=body.prior_reviewer_opinions,
         )
@@ -293,7 +305,7 @@ def post_review_reporter_reply_auth(
         raise HTTPException(status_code=400, detail=str(e)) from e
     if not (reply or "").strip():
         raise HTTPException(status_code=502, detail="보고자 답변이 비었습니다.")
-    return ReviewReporterReplyResponse(reply=reply.strip(), model_used=model)
+    return ReviewReporterReplyResponse(reply=reply.strip(), model_used=reply_model_used)
 
 
 @router.post("/auth/{stream_id}/review-turn", response_model=ReviewTurnResponse)
@@ -306,7 +318,9 @@ def post_review_turn_auth(
     """reporter_brief 있으면 최근 1턴 검토, 없으면 트랜스크립트 전체 검토 (DB 미저장)."""
     get_owned_stream(db, stream_id, user_id)
     topic_id = _latest_topic_id_for_stream(db, stream_id)
-    model = resolve_model(db, user_id=user_id, topic_session_id=topic_id, task="chat")
+    reporter_model, model = resolve_dialogue_reporter_reviewer_models(
+        db, user_id=user_id, topic_session_id=topic_id
+    )
     override = body.system_prompt_override
     if override is not None:
         override = override.strip() or None
@@ -320,28 +334,33 @@ def post_review_turn_auth(
     if rpf is not None:
         rpf = rpf.strip() or None
     try:
-        if prv and rpf:
-            answer = run_review_followup_on_reporter_reply(
+        if rpf:
+            answer, review_model_used = run_review_followup_on_reporter_reply(
                 db,
                 user_id=user_id,
                 model=model,
+                reporter_model=reporter_model,
                 stream_id=stream_id,
                 role_id=body.role_id,
                 reporter_brief=rb,
-                prior_reviewer_opinion=prv,
+                prior_reviewer_opinion=prv or "",
                 reporter_reply=rpf,
                 system_prompt_override=override,
                 prior_reporter_replies=body.prior_reporter_replies,
+                prior_reviewer_opinions=body.prior_reviewer_opinions,
+                composer_prompt=body.composer_prompt,
             )
         else:
-            answer = run_review_turn(
+            answer, review_model_used = run_review_turn(
                 db,
                 user_id=user_id,
                 model=model,
+                reporter_model=reporter_model,
                 stream_id=stream_id,
                 role_id=body.role_id,
                 system_prompt_override=override,
                 reporter_brief=rb,
+                prior_reviewer_opinions=body.prior_reviewer_opinions,
             )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -350,7 +369,7 @@ def post_review_turn_auth(
             status_code=502,
             detail="검토 응답이 비었습니다. LLM API 키·모델을 확인하세요.",
         )
-    return ReviewTurnResponse(answer=answer.strip(), model_used=model)
+    return ReviewTurnResponse(answer=answer.strip(), model_used=review_model_used)
 
 
 # ----- 레거시(데모/스크립트): user_id 바디 -----
