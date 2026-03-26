@@ -48,13 +48,15 @@ copy .env.example .env   # Windows — 필요 시 FERNET_KEY, OPENAI_API_KEY 설
 poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Poetry 설치가 다른 패키지(예: kaleido) 때문에 막히면, **백엔드 디렉터리에서** 최소 패키지만 pip로 설치한 뒤 동일하게 `uvicorn`을 실행할 수 있습니다.
+Poetry 설치가 다른 패키지(예: kaleido) 때문에 막히면, **백엔드 디렉터리에서** pip로 설치한 뒤 동일하게 `uvicorn`을 실행할 수 있습니다.
 
 ```bash
 cd cap/backend
-python -m pip install fastapi "uvicorn[standard]" httpx cryptography python-multipart sqlalchemy openai rank-bm25 python-dotenv pydantic supabase PyJWT psycopg2-binary python-docx
+python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+(한 줄로 최소만 쓰려면 예전처럼 `pip install fastapi "uvicorn[standard]" httpx cryptography python-multipart sqlalchemy openai rank-bm25 python-dotenv pydantic supabase PyJWT psycopg2-binary python-docx` 도 가능하지만, RAG·PDF·LLM 전 기능을 쓰려면 `requirements.txt` 전체를 권장합니다.)
 
 - API 문서: http://127.0.0.1:8000/docs  
 - 채팅 UI: http://127.0.0.1:8000/ui  
