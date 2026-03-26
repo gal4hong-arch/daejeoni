@@ -1,0 +1,2 @@
+# 저장소 루트(Render 기본 빌드 경로)에서 설치할 때 backend 의존성을 끌어옵니다.
+-r backend/requirements.txt

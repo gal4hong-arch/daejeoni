@@ -58,6 +58,13 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 (한 줄로 최소만 쓰려면 예전처럼 `pip install fastapi "uvicorn[standard]" httpx cryptography python-multipart sqlalchemy openai rank-bm25 python-dotenv pydantic supabase PyJWT psycopg2-binary python-docx` 도 가능하지만, RAG·PDF·LLM 전 기능을 쓰려면 `requirements.txt` 전체를 권장합니다.)
 
+**Render 등 (저장소 루트 = `cap` 루트)**  
+빌드 명령이 `pip install -r requirements.txt` 이고 **Root Directory**를 비워 두면, `cap/requirements.txt`(루트)가 `backend/requirements.txt`를 끌어오도록 되어 있습니다.  
+대신 **Root Directory**를 `backend`로 두었다면 `pip install -r requirements.txt` 한 줄로 동일합니다.
+
+**Python 버전**  
+Render 기본이 3.13대이면 일부 휠(OCR 등)이 맞지 않을 수 있습니다. **Environment**에 `PYTHON_VERSION` = `3.11.9` 또는 `3.12.8` 처럼 **3.11–3.12**를 지정하는 것을 권장합니다. (`requirements.txt`의 `rapidocr-onnxruntime` 은 3.13 호환을 위해 1.2.x 로 상한을 둠.)
+
 - API 문서: http://127.0.0.1:8000/docs  
 - 채팅 UI: http://127.0.0.1:8000/ui  
 
