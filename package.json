@@ -1,0 +1,8 @@
+{
+  "name": "cap",
+  "private": true,
+  "scripts": {
+    "build": "npm run build --prefix law-qa",
+    "test": "npm test --prefix law-qa"
+  }
+}
