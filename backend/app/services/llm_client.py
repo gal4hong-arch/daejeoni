@@ -10,7 +10,25 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import UserApiKey
-from app.services.crypto_keys import decrypt_secret
+from app.services.user_api_keys import read_user_api_key_stored
+
+
+def _stored_row_exists(db: Session, user_id: str, provider: str) -> bool:
+    row = (
+        db.execute(select(UserApiKey).where(UserApiKey.user_id == user_id, UserApiKey.provider == provider))
+        .scalar_one_or_none()
+    )
+    return row is not None
+
+
+def _raise_missing_llm_key(db: Session, user_id: str, provider: str, label: str) -> None:
+    """행은 있는데 복호화 실패 시 FERNET_KEY 불일치 안내."""
+    if _stored_row_exists(db, user_id, provider):
+        raise RuntimeError(
+            f"{label} API 키는 DB에 있으나 복호화하지 못했습니다. "
+            "배포 서버의 FERNET_KEY가 키를 저장할 때와 동일한지 확인하거나, 「유저 정보」에서 해당 키를 다시 저장하세요."
+        )
+    raise RuntimeError(f"{label} API 키가 없습니다. 사이드바·유저 정보에서 저장하세요.")
 
 
 def _get_openai_key(db: Session, user_id: str) -> str | None:
@@ -22,7 +40,7 @@ def _get_openai_key(db: Session, user_id: str) -> str | None:
         .scalar_one_or_none()
     )
     if row:
-        return decrypt_secret(row.encrypted_key)
+        return read_user_api_key_stored(row.encrypted_key)
     return None
 
 
@@ -35,7 +53,7 @@ def _get_anthropic_key(db: Session, user_id: str) -> str | None:
         .scalar_one_or_none()
     )
     if row:
-        return decrypt_secret(row.encrypted_key)
+        return read_user_api_key_stored(row.encrypted_key)
     return None
 
 
@@ -48,7 +66,7 @@ def _get_google_key(db: Session, user_id: str) -> str | None:
         .scalar_one_or_none()
     )
     if row:
-        return decrypt_secret(row.encrypted_key)
+        return read_user_api_key_stored(row.encrypted_key)
     return None
 
 
@@ -107,7 +125,7 @@ def chat_completion(
 
         key = _get_anthropic_key(db, user_id)
         if not key:
-            raise RuntimeError("Anthropic API 키가 없습니다. 사이드바에서 저장하세요.")
+            _raise_missing_llm_key(db, user_id, "anthropic", "Anthropic")
         client = Anthropic(api_key=key)
         mid = model if "/" not in model else model.split("/")[-1]
         if not mid.startswith("claude"):
@@ -135,7 +153,7 @@ def chat_completion(
 
         key = _get_google_key(db, user_id)
         if not key:
-            raise RuntimeError("Google(Gemini) API 키가 없습니다.")
+            _raise_missing_llm_key(db, user_id, "google", "Google(Gemini)")
         genai.configure(api_key=key)
         mid = model
         if "gemini" not in mid:
@@ -152,7 +170,7 @@ def chat_completion(
 
     key = _get_openai_key(db, user_id)
     if not key:
-        raise RuntimeError("OpenAI API 키가 없습니다.")
+        _raise_missing_llm_key(db, user_id, "openai", "OpenAI")
     client = OpenAI(api_key=key)
     oa_messages: list[dict[str, str]] = [{"role": "system", "content": system}]
     oa_messages.extend(_history_for_openai(conversation_history))

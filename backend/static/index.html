@@ -1434,6 +1434,28 @@
     </div>
   </div>
 
+  <div id="authWelcomeBackdrop" class="rt-backdrop" aria-hidden="true">
+    <div
+      class="rt-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="authWelcomeTitle"
+      onclick="event.stopPropagation()"
+      style="max-width:440px;"
+    >
+      <h3 id="authWelcomeTitle" class="rt-title">회원가입 · 로그인 안내</h3>
+      <p class="rt-hint">
+        서비스를 이용하려면 <b>Supabase 계정으로 로그인</b>이 필요합니다. 왼쪽 메뉴
+        <b>「유저 정보」</b>에서 이메일로 <b>회원가입</b> 또는 <b>로그인</b>한 뒤 채팅·모델 설정을 사용하세요.
+        (LLM API 키는 로그인 후 같은 화면에서 서버에 암호화 저장됩니다.)
+      </p>
+      <div class="rt-actions">
+        <button type="button" class="btn btn-secondary" id="authWelcomeLater">나중에</button>
+        <button type="button" class="btn btn-primary" id="authWelcomeGoUser">유저 정보로 이동</button>
+      </div>
+    </div>
+  </div>
+
   <script type="module">
     import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
     import { marked } from 'https://esm.sh/marked@15.0.6';
@@ -1449,6 +1471,8 @@
     let publicCfg = { supabase_url: '', supabase_anon_key: '', demo_user_header_allowed: false, jwt_verification_relaxed: false };
     const STORAGE_APP_MARK_LAUNCHED = 'app_mark_launched_v2';
     const STORAGE_THEME = 'app_theme';
+    /** 첫 방문 시 로그인 안내 모달 — 로그인 성공 또는 「나중에」로 닫음 */
+    const STORAGE_AUTH_LOGIN_PROMPT = 'cap_auth_login_prompt_v1';
 
     let reviewReporterBrief = '';
     let reviewSessionPrimed = false;
@@ -2973,11 +2997,35 @@
       if (llmWrap) llmWrap.style.display = 'none';
     }
     function showLoggedIn(label) {
+      try {
+        localStorage.setItem(STORAGE_AUTH_LOGIN_PROMPT, '1');
+      } catch (_e) {}
       document.getElementById('loginForm').style.display = 'none';
       document.getElementById('loggedBar').style.display = 'block';
       document.getElementById('userPill').textContent = label;
       authErr.textContent = '';
+      closeAuthWelcomeModal();
       loadUserModelSettingsPanel().catch(() => {});
+    }
+
+    function closeAuthWelcomeModal() {
+      const el = document.getElementById('authWelcomeBackdrop');
+      if (!el) return;
+      el.classList.remove('rt-open');
+      el.setAttribute('aria-hidden', 'true');
+    }
+
+    function maybeShowAuthWelcomeModal() {
+      try {
+        if (localStorage.getItem(STORAGE_AUTH_LOGIN_PROMPT) === '1') return;
+        if (accessToken) return;
+        if (demoUser && publicCfg.demo_user_header_allowed) return;
+        if (!publicCfg.supabase_url || !publicCfg.supabase_anon_key) return;
+        const el = document.getElementById('authWelcomeBackdrop');
+        if (!el) return;
+        el.classList.add('rt-open');
+        el.setAttribute('aria-hidden', 'false');
+      } catch (_e) {}
     }
 
     document.getElementById('btnLogin').onclick = async () => {
@@ -3020,6 +3068,43 @@
       showLoggedOut();
     };
 
+    (function setupAuthWelcomeModal() {
+      const later = document.getElementById('authWelcomeLater');
+      const go = document.getElementById('authWelcomeGoUser');
+      const back = document.getElementById('authWelcomeBackdrop');
+      if (later) {
+        later.onclick = () => {
+          try {
+            localStorage.setItem(STORAGE_AUTH_LOGIN_PROMPT, '1');
+          } catch (_e) {}
+          closeAuthWelcomeModal();
+        };
+      }
+      if (go) {
+        go.onclick = () => {
+          closeAuthWelcomeModal();
+          try {
+            localStorage.setItem(STORAGE_AUTH_LOGIN_PROMPT, '1');
+          } catch (_e) {}
+          sidebar.classList.remove('collapsed');
+          try {
+            localStorage.removeItem('sb_collapsed');
+          } catch (_e) {}
+          setView('user');
+          const nb = document.querySelector('.nav-btn[data-view="user"]');
+          if (nb) nb.click();
+        };
+      }
+      if (back) {
+        back.onclick = () => {
+          try {
+            localStorage.setItem(STORAGE_AUTH_LOGIN_PROMPT, '1');
+          } catch (_e) {}
+          closeAuthWelcomeModal();
+        };
+      }
+    })();
+
     document.getElementById('btnDemoApply').onclick = () => {
       demoUser = document.getElementById('demoUserId').value.trim() || 'demo-user';
       localStorage.setItem('demo_user_id', demoUser);
@@ -3028,6 +3113,10 @@
       document.getElementById('loggedBar').style.display = 'block';
       document.getElementById('userPill').textContent = '데모: ' + demoUser;
       document.getElementById('loginForm').style.display = 'none';
+      try {
+        localStorage.setItem(STORAGE_AUTH_LOGIN_PROMPT, '1');
+      } catch (_e) {}
+      closeAuthWelcomeModal();
       loadUserModelSettingsPanel().catch(() => {});
     };
 
@@ -4485,6 +4574,7 @@
 
     loadThemeFromStorage();
     await initConfig();
+    maybeShowAuthWelcomeModal();
     refreshComposerMode();
     if (requireAuth(true)) loadUserModelSettingsPanel().catch(() => {});
     if (demoUser && publicCfg.demo_user_header_allowed && !accessToken) {

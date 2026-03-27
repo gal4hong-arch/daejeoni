@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import ChatMessage, TopicClassification, TopicSession, UserApiKey
-from app.services.crypto_keys import decrypt_secret
+from app.services.user_api_keys import read_user_api_key_stored
 
 
 @dataclass
@@ -56,7 +56,7 @@ def _openai_client_for_user(db: Session, user_id: str) -> OpenAI | None:
         select(UserApiKey).where(UserApiKey.user_id == user_id, UserApiKey.provider == "openai")
     ).scalar_one_or_none()
     if row:
-        plain = decrypt_secret(row.encrypted_key)
+        plain = read_user_api_key_stored(row.encrypted_key)
         if plain:
             return OpenAI(api_key=plain)
     return None

@@ -17,33 +17,25 @@ from app.schemas.api import (
     UserSettingsOut,
 )
 from app.services.user_data_reset import reset_scopes
-from app.services.crypto_keys import encrypt_secret
+from app.services.user_api_keys import has_usable_stored_key, store_user_api_key
 
 router = APIRouter()
-
-
-def _has_stored_key(db: Session, user_id: str, provider: str) -> bool:
-    row = (
-        db.execute(select(UserApiKey).where(UserApiKey.user_id == user_id, UserApiKey.provider == provider))
-        .scalar_one_or_none()
-    )
-    return row is not None
 
 
 def _providers_with_keys(db: Session, user_id: str) -> dict[str, bool]:
     s = get_settings()
     return {
-        "openai": bool((s.openai_api_key or "").strip()) or _has_stored_key(db, user_id, "openai"),
-        "anthropic": bool((s.anthropic_api_key or "").strip()) or _has_stored_key(db, user_id, "anthropic"),
-        "google": bool((s.google_api_key or "").strip()) or _has_stored_key(db, user_id, "google"),
+        "openai": bool((s.openai_api_key or "").strip()) or has_usable_stored_key(db, user_id, "openai"),
+        "anthropic": bool((s.anthropic_api_key or "").strip()) or has_usable_stored_key(db, user_id, "anthropic"),
+        "google": bool((s.google_api_key or "").strip()) or has_usable_stored_key(db, user_id, "google"),
     }
 
 
 def _user_stored_keys_only(db: Session, user_id: str) -> dict[str, bool]:
     return {
-        "openai": _has_stored_key(db, user_id, "openai"),
-        "anthropic": _has_stored_key(db, user_id, "anthropic"),
-        "google": _has_stored_key(db, user_id, "google"),
+        "openai": has_usable_stored_key(db, user_id, "openai"),
+        "anthropic": has_usable_stored_key(db, user_id, "anthropic"),
+        "google": has_usable_stored_key(db, user_id, "google"),
     }
 
 
@@ -65,7 +57,7 @@ def _upsert_api_key(db: Session, user_id: str, provider: str, plain: str) -> Non
         .filter(UserApiKey.user_id == user_id, UserApiKey.provider == provider)
         .one_or_none()
     )
-    enc = encrypt_secret(plain)
+    enc = store_user_api_key(plain)
     if row:
         row.encrypted_key = enc
     else:

@@ -34,6 +34,7 @@ class Settings:
     supabase_anon_key: str
     supabase_jwt_secret: str
     allow_demo_user_header: bool
+    user_api_keys_plaintext: bool
 
     def __init__(self) -> None:
         self.database_url = os.getenv("DATABASE_URL", "sqlite:///./data/platform.db")
@@ -80,6 +81,9 @@ class Settings:
             "true",
             "yes",
         )
+        # 기본 true: 사용자 LLM 키를 DB에 평문 저장·읽기(FERNET 불일치 방지). 운영에서는 false + FERNET_KEY 권장.
+        _pt = (os.getenv("USER_API_KEYS_PLAINTEXT", "true") or "true").strip().lower()
+        self.user_api_keys_plaintext = _pt not in ("0", "false", "no", "off")
         # 쉼표 구분. 이 이메일로 RAG 소스 등록 시 전 사용자에게 문서·청크 검색에 포함.
         self.rag_admin_emails = os.getenv("RAG_ADMIN_EMAILS", "gal4hong@gmail.com").strip()
         try:

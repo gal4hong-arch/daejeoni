@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db.models import UserApiKey
-from app.services.crypto_keys import decrypt_secret
+from app.services.user_api_keys import read_user_api_key_stored
 
 
 def _openai_for_embed(db: Session, user_id: str) -> OpenAI | None:
@@ -20,7 +20,7 @@ def _openai_for_embed(db: Session, user_id: str) -> OpenAI | None:
         .scalar_one_or_none()
     )
     if row:
-        k = decrypt_secret(row.encrypted_key)
+        k = read_user_api_key_stored(row.encrypted_key)
         if k:
             return OpenAI(api_key=k)
     return None

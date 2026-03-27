@@ -1,16 +1,8 @@
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import TopicSession, UserApiKey, UserModelPreference
-
-
-def _has_user_provider_key(db: Session, user_id: str, provider: str) -> bool:
-    row = (
-        db.execute(select(UserApiKey).where(UserApiKey.user_id == user_id, UserApiKey.provider == provider))
-        .scalar_one_or_none()
-    )
-    return row is not None
+from app.db.models import TopicSession, UserModelPreference
+from app.services.user_api_keys import has_usable_stored_key
 
 
 def providers_with_keys_ordered(db: Session, user_id: str, settings) -> list[str]:
@@ -19,13 +11,13 @@ def providers_with_keys_ordered(db: Session, user_id: str, settings) -> list[str
     out: list[str] = []
     for p in order:
         if p == "openai":
-            if (settings.openai_api_key or "").strip() or _has_user_provider_key(db, user_id, "openai"):
+            if (settings.openai_api_key or "").strip() or has_usable_stored_key(db, user_id, "openai"):
                 out.append(p)
         elif p == "anthropic":
-            if (settings.anthropic_api_key or "").strip() or _has_user_provider_key(db, user_id, "anthropic"):
+            if (settings.anthropic_api_key or "").strip() or has_usable_stored_key(db, user_id, "anthropic"):
                 out.append(p)
         elif p == "google":
-            if (settings.google_api_key or "").strip() or _has_user_provider_key(db, user_id, "google"):
+            if (settings.google_api_key or "").strip() or has_usable_stored_key(db, user_id, "google"):
                 out.append(p)
     return out
 

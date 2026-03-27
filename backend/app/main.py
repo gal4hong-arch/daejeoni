@@ -27,6 +27,22 @@ async def lifespan(_app: FastAPI):
             "SUPABASE_JWT_SECRET 미설정 — Supabase Bearer 토큰은 서명 검증 없이 sub만 사용합니다. "
             "운영·스테이징에서는 대시보드 Settings > API > JWT Secret 을 반드시 설정하세요."
         )
+    _du = (get_database_url() or "").lower()
+    if (
+        _du.startswith("postgres")
+        and not (settings.fernet_key or "").strip()
+        and not settings.user_api_keys_plaintext
+    ):
+        _log.warning(
+            "FERNET_KEY 미설정 — 프로세스마다 임의 키로 암호화되어, 재시작·다른 인스턴스에서는 "
+            "DB에 저장된 사용자 API 키를 복호화할 수 없습니다. cap/backend/.env 등에 "
+            "고정 FERNET_KEY를 설정하거나 USER_API_KEYS_PLAINTEXT=true(기본)를 유지하세요."
+        )
+    if settings.user_api_keys_plaintext:
+        _log.info(
+            "USER_API_KEYS_PLAINTEXT 기본: 사용자 LLM 키는 DB에 평문 저장입니다. "
+            "암호화를 쓰려면 USER_API_KEYS_PLAINTEXT=false 와 FERNET_KEY 를 설정하세요."
+        )
     yield
 
 
