@@ -1,4 +1,4 @@
-"""사용자별 DB 저장 API 키 — Fernet 또는 임시 평문(USER_API_KEYS_PLAINTEXT)."""
+"""사용자별 DB 저장 API 키 — 기본 Fernet 암호화, USER_API_KEYS_PLAINTEXT=true 시 평문."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session

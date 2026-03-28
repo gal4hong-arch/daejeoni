@@ -36,12 +36,12 @@ async def lifespan(_app: FastAPI):
         _log.warning(
             "FERNET_KEY 미설정 — 프로세스마다 임의 키로 암호화되어, 재시작·다른 인스턴스에서는 "
             "DB에 저장된 사용자 API 키를 복호화할 수 없습니다. cap/backend/.env 등에 "
-            "고정 FERNET_KEY를 설정하거나 USER_API_KEYS_PLAINTEXT=true(기본)를 유지하세요."
+            "고정 FERNET_KEY를 설정하거나, 임시로 USER_API_KEYS_PLAINTEXT=true 를 쓸 수 있습니다."
         )
     if settings.user_api_keys_plaintext:
-        _log.info(
-            "USER_API_KEYS_PLAINTEXT 기본: 사용자 LLM 키는 DB에 평문 저장입니다. "
-            "암호화를 쓰려면 USER_API_KEYS_PLAINTEXT=false 와 FERNET_KEY 를 설정하세요."
+        _log.warning(
+            "USER_API_KEYS_PLAINTEXT=true — 사용자 LLM 키가 DB에 평문으로 저장됩니다. "
+            "가능하면 false 로 두고 FERNET_KEY 로 암호화 저장하세요."
         )
     yield
 

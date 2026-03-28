@@ -81,9 +81,9 @@ class Settings:
             "true",
             "yes",
         )
-        # 기본 true: 사용자 LLM 키를 DB에 평문 저장·읽기(FERNET 불일치 방지). 운영에서는 false + FERNET_KEY 권장.
-        _pt = (os.getenv("USER_API_KEYS_PLAINTEXT", "true") or "true").strip().lower()
-        self.user_api_keys_plaintext = _pt not in ("0", "false", "no", "off")
+        # 기본 false(Fernet 암호화). 임시로 평문만 쓸 때만 USER_API_KEYS_PLAINTEXT=true
+        _pt = (os.getenv("USER_API_KEYS_PLAINTEXT", "false") or "false").strip().lower()
+        self.user_api_keys_plaintext = _pt in ("1", "true", "yes", "on")
         # 쉼표 구분. 이 이메일로 RAG 소스 등록 시 전 사용자에게 문서·청크 검색에 포함.
         self.rag_admin_emails = os.getenv("RAG_ADMIN_EMAILS", "gal4hong@gmail.com").strip()
         try:
