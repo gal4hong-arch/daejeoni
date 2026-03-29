@@ -27,6 +27,7 @@ from app.schemas.api import (
 from app.security_stream import get_owned_stream
 from app.services.model_resolver import resolve_dialogue_reporter_reviewer_models, resolve_model
 from app.services.orchestrator import process_chat, process_chat_user_only
+from app.services.audit_log import audit
 from app.services.review_chat import (
     run_review_followup_on_reporter_reply,
     run_reporter_reply_to_reviewer,
@@ -179,6 +180,23 @@ def post_message_auth(
                 use_legal=body.use_legal,
                 task=body.task,
                 document_ids=body.document_ids,
+            )
+        lat = ((out.chat_trace or {}).get("latency_ms") or {}) if out.chat_trace else {}
+        if lat:
+            audit(
+                db,
+                user_id=user_id,
+                action="chat.turn.latency",
+                detail={
+                    "stream_id": stream_id,
+                    "intent": out.intent,
+                    "model_used": out.model_used,
+                    "total_ms": lat.get("total_ms"),
+                    "llm_answer_ms": lat.get("llm_answer_ms"),
+                    "rag_ms": lat.get("rag_ms"),
+                    "legal_fetch_ms": lat.get("legal_fetch_ms"),
+                    "topic_classify_ms": lat.get("topic_classify_ms"),
+                },
             )
         if prior_n == 0:
             stream.title = stream_title_from_topic(out.detected_topic, body.content)
@@ -412,6 +430,23 @@ def post_message(stream_id: str, body: ChatRequest, db: Session = Depends(get_db
             task=body.task,
             document_ids=body.document_ids,
         )
+        lat = ((out.chat_trace or {}).get("latency_ms") or {}) if out.chat_trace else {}
+        if lat:
+            audit(
+                db,
+                user_id=body.user_id,
+                action="chat.turn.latency",
+                detail={
+                    "stream_id": stream_id,
+                    "intent": out.intent,
+                    "model_used": out.model_used,
+                    "total_ms": lat.get("total_ms"),
+                    "llm_answer_ms": lat.get("llm_answer_ms"),
+                    "rag_ms": lat.get("rag_ms"),
+                    "legal_fetch_ms": lat.get("legal_fetch_ms"),
+                    "topic_classify_ms": lat.get("topic_classify_ms"),
+                },
+            )
         if prior_n == 0:
             s.title = stream_title_from_topic(out.detected_topic, body.content)
         db.commit()

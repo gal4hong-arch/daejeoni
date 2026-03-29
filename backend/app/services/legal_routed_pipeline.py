@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 import httpx
@@ -46,6 +47,10 @@ _TITLE_SYSTEM = """너는 대한민국 법령·행정 실무를 돕는 보조 �
   "notes_for_search": "검색 힌트(약칭→정식명, 후보 우선순위 등). 불필요하면 빈 문자열"
 }
 - 해당 법령을 특정할 수 없으면 titles는 []이고, intent_summary·law_focus는 여전히 채운다."""
+
+_TITLE_CACHE_TTL_SEC = 180.0
+_TITLE_CACHE_MAX = 256
+_TITLE_CACHE: dict[str, tuple[float, list[str], str, LawQueryAnalysis | None]] = {}
 
 
 def _strip_json_block(raw: str) -> str:
@@ -94,14 +99,48 @@ def _parse_law_route_from_llm(raw: str) -> tuple[list[str], LawQueryAnalysis | N
     return titles, analysis
 
 
+def _title_cache_key(user_id: str, model: str, user_message: str) -> str:
+    norm = re.sub(r"\s+", " ", (user_message or "").strip().lower())[:1200]
+    return f"{user_id}:{model}:{norm}"
+
+
+def _title_cache_get(key: str) -> tuple[list[str], str, LawQueryAnalysis | None] | None:
+    row = _TITLE_CACHE.get(key)
+    if not row:
+        return None
+    ts, titles, raw, analysis = row
+    if time.time() - ts > _TITLE_CACHE_TTL_SEC:
+        _TITLE_CACHE.pop(key, None)
+        return None
+    return titles, raw, analysis
+
+
+def _title_cache_set(
+    key: str, titles: list[str], raw: str, analysis: LawQueryAnalysis | None
+) -> None:
+    _TITLE_CACHE[key] = (time.time(), list(titles), raw, analysis)
+    if len(_TITLE_CACHE) <= _TITLE_CACHE_MAX:
+        return
+    drop_n = max(1, len(_TITLE_CACHE) - _TITLE_CACHE_MAX)
+    for k in list(_TITLE_CACHE.keys())[:drop_n]:
+        _TITLE_CACHE.pop(k, None)
+
+
 def propose_relevant_law_titles(
     db: Session,
     *,
     user_id: str,
     model: str,
     user_message: str,
+    llm_meta_out: dict | None = None,
 ) -> tuple[list[str], str, LawQueryAnalysis | None]:
     """1단계: 질의 의도·초점·법령 공식 제목 목록을 LLM에 요청."""
+    ckey = _title_cache_key(user_id, model, user_message)
+    cached = _title_cache_get(ckey)
+    if cached is not None:
+        if llm_meta_out is not None:
+            llm_meta_out.update({"cache_hit": True, "llm_ms": 0.0, "provider": "cache"})
+        return cached
     user_block = (
         f"사용자 질문:\n{user_message.strip()}\n\n"
         "위 질문에 대해:\n"
@@ -120,10 +159,12 @@ def propose_relevant_law_titles(
             user=user_block,
             temperature=0.1,
             max_tokens=1024,
+            meta_out=llm_meta_out,
         )
     except Exception as e:
         return [], f"(제목 추출 실패: {e})", None
     titles, analysis = _parse_law_route_from_llm(raw)
+    _title_cache_set(ckey, titles, raw, analysis)
     return titles, raw, analysis
 
 
@@ -150,6 +191,7 @@ def fetch_legal_bodies_for_titles(
     반환 used_refs: 답변 근거로 실제 본문을 가져온 법령만 (링크용).
     """
     settings = get_settings()
+    t0 = time.perf_counter()
     service_url = (settings.law_go_kr_service_url or "").strip().rstrip("/")
     stype = (settings.law_go_kr_service_type or "JSON").strip().upper() or "JSON"
     search_url = (settings.law_go_kr_base_url or "").strip()
@@ -195,12 +237,26 @@ def fetch_legal_bodies_for_titles(
         )
 
     limit = max(1, min(service_max_ids, 5))
+    try:
+        timebox_sec = float(getattr(settings, "law_go_kr_timebox_sec", 12.0) or 12.0)
+    except (TypeError, ValueError):
+        timebox_sec = 12.0
+    timebox_sec = max(3.0, min(timebox_sec, 40.0))
 
     jo_param = parse_law_service_jo_from_query(user_query)
     service_extra: dict[str, str] | None = {"JO": jo_param} if jo_param else None
 
     with httpx.Client(timeout=timeout, headers=DEFAULT_HEADERS, follow_redirects=True) as client:
         for i, title in enumerate(titles):
+            if time.perf_counter() - t0 > timebox_sec:
+                search_log.append(
+                    {
+                        "endpoint": "lawSearch.do",
+                        "phase": "timebox",
+                        "note": f"법령 검색 timebox 초과({timebox_sec:.1f}s)로 중단",
+                    }
+                )
+                break
             if len(matches_ordered) >= limit:
                 break
             row: dict[str, Any] = {
@@ -280,6 +336,15 @@ def fetch_legal_bodies_for_titles(
             )
 
         for m in matches_ordered:
+            if time.perf_counter() - t0 > timebox_sec:
+                body_fetches.append(
+                    {
+                        "endpoint": "lawService.do",
+                        "phase": "timebox",
+                        "note": f"법령 본문 조회 timebox 초과({timebox_sec:.1f}s)로 중단",
+                    }
+                )
+                break
             slab = _label_for_match(m)
             try:
                 st, svc_body, svc_data, eff_tgt, svc_req_url = fetch_statute_service_body(
@@ -397,6 +462,8 @@ def fetch_legal_bodies_for_titles(
         "search_steps": search_log,
         "body_fetches": body_fetches,
         "used_law_ids": [r["law_id"] for r in used_refs],
+        "timebox_sec": timebox_sec,
+        "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
     }
     if jo_param:
         payload["JO"] = jo_param

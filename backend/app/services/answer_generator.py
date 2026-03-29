@@ -48,6 +48,7 @@ def generate_answer(
     legal_routed: bool = False,
     law_query_analysis: LawQueryAnalysis | None = None,
     conversation_history: list[tuple[str, str]] | None = None,
+    llm_meta_out: dict | None = None,
 ) -> str:
     # 법령 라우팅 시: 일부 프로바이더가 긴 입력에서 뒤쪽을 잘라내므로 RAG 발췌를 짧게 하고,
     # 법령 블록을 질문 직후에 둔다(잘리더라도 법령이 남도록).
@@ -104,6 +105,7 @@ def generate_answer(
             user=user_prompt,
             temperature=0.3,
             conversation_history=conversation_history,
+            meta_out=llm_meta_out,
         )
     except RuntimeError:
         if not chunks and not (legal and legal.text):

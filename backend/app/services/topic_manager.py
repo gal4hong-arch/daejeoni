@@ -100,16 +100,56 @@ def route_message(
         .scalars()
         .all()
     )
+    msg = (message or "").strip()
+
+    # 빠른 경로: 기존 토픽이 있을 때 고신뢰 매칭/신규 여부를 휴리스틱으로 먼저 판정.
+    if topics:
+        def _score(t: TopicSession) -> float:
+            return max(_similarity(msg, t.title), _similarity(msg, t.topic_label))
+
+        best_t = max(topics, key=_score)
+        best_s = _score(best_t)
+        if best_s >= 0.62:
+            return TopicRouteResult(best_t.id, "matched", best_t.topic_label, best_t.work_type, best_s, None)
+        # 짧은 후속 메시지는 LLM 분류를 생략해 지연을 줄인다.
+        if len(msg) < 24 and best_s >= 0.18:
+            return TopicRouteResult(best_t.id, "ambiguous", best_t.topic_label, best_t.work_type, best_s, None)
+        if best_s < 0.10:
+            tid = str(uuid.uuid4())
+            ts = TopicSession(
+                id=tid,
+                conversation_stream_id=stream_id,
+                title=msg[:60] + ("…" if len(msg) > 60 else ""),
+                topic_label=msg[:80],
+                work_type="general",
+            )
+            db.add(ts)
+            db.flush()
+            return TopicRouteResult(tid, "new_topic", ts.topic_label, ts.work_type, 0.35, None)
+    else:
+        # 첫 메시지는 LLM 분류를 호출하지 않고 즉시 세션을 만든다.
+        tid = str(uuid.uuid4())
+        ts = TopicSession(
+            id=tid,
+            conversation_stream_id=stream_id,
+            title=msg[:60] + ("…" if len(msg) > 60 else ""),
+            topic_label=msg[:80],
+            work_type="general",
+        )
+        db.add(ts)
+        db.flush()
+        return TopicRouteResult(tid, "new_topic", ts.topic_label, ts.work_type, 0.4, None)
+
     ctx = _recent_context(db, stream_id)
 
     client = _openai_client_for_user(db, user_id)
     if client:
-        parsed = _llm_classify(client, message, ctx, topics)
+        parsed = _llm_classify(client, msg, ctx, topics)
         if parsed:
             dt = parsed.get("decision_type") or "new_topic"
             conf = float(parsed.get("confidence") or 0.5)
             wt = str(parsed.get("work_type") or "general")
-            det = str(parsed.get("detected_topic") or message[:80])
+            det = str(parsed.get("detected_topic") or msg[:80])
             mid = parsed.get("matched_topic_id")
             ent = parsed.get("entities")
             ent_json = json.dumps(ent, ensure_ascii=False) if ent is not None else None
@@ -131,21 +171,8 @@ def route_message(
                 return TopicRouteResult(tid, "new_topic", det, wt, conf, ent_json)
 
     # 휴리스틱 폴백
-    if not topics:
-        tid = str(uuid.uuid4())
-        ts = TopicSession(
-            id=tid,
-            conversation_stream_id=stream_id,
-            title=message[:60] + ("…" if len(message) > 60 else ""),
-            topic_label=message[:80],
-            work_type="general",
-        )
-        db.add(ts)
-        db.flush()
-        return TopicRouteResult(tid, "new_topic", ts.topic_label, ts.work_type, 0.4, None)
-
     def _score(t: TopicSession) -> float:
-        return max(_similarity(message, t.title), _similarity(message, t.topic_label))
+        return max(_similarity(msg, t.title), _similarity(msg, t.topic_label))
 
     best_t = max(topics, key=_score)
     best_s = _score(best_t)
@@ -157,8 +184,8 @@ def route_message(
         ts = TopicSession(
             id=tid,
             conversation_stream_id=stream_id,
-            title=message[:60] + ("…" if len(message) > 60 else ""),
-            topic_label=message[:80],
+            title=msg[:60] + ("…" if len(msg) > 60 else ""),
+            topic_label=msg[:80],
             work_type="general",
         )
         db.add(ts)

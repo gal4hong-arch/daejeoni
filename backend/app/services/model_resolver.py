@@ -33,6 +33,27 @@ def default_model_for_provider(provider: str, settings) -> str:
     return settings.system_fallback_model or "gpt-4o-mini"
 
 
+def maybe_promote_model_for_complex_query(model: str, user_message: str, settings) -> str:
+    """
+    복잡한 질의에서만 조건부 승격(기본 off).
+    - MODEL_COMPLEX_PROMOTE=true 일 때만 동작
+    - 체감 지연 우선 기본 정책과 충돌하지 않도록 승격 기준을 보수적으로 둔다.
+    """
+    if not bool(getattr(settings, "model_complex_promote", False)):
+        return model
+    msg = (user_message or "").strip()
+    if len(msg) < 1100:
+        return model
+    low = (model or "").lower()
+    if low == "gpt-4o-mini":
+        return "gpt-4.1"
+    if low == "claude-3-5-haiku-20241022":
+        return "claude-3-5-sonnet-20241022"
+    if low in {"gemini-2.5-flash-lite", "gemini-2.5-flash"}:
+        return "gemini-2.5-pro"
+    return model
+
+
 def resolve_dialogue_reporter_reviewer_models(
     db: Session,
     *,
@@ -90,5 +111,9 @@ def resolve_model(
 
     if pref and pref.default_model:
         return pref.default_model
+
+    prov = providers_with_keys_ordered(db, user_id, settings)
+    if prov:
+        return default_model_for_provider(prov[0], settings)
 
     return settings.system_fallback_model

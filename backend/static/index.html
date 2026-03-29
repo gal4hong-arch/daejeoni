@@ -2724,6 +2724,54 @@
       if (state.full) state.full.textContent = state.lines.join('\n');
     }
 
+    function startPendingPhaseTicker(state, phases, opts) {
+      if (!state || !Array.isArray(phases) || phases.length === 0) {
+        return { stop: () => {} };
+      }
+      const base = opts || {};
+      const firstDelayMs = Math.max(400, Number(base.firstDelayMs || 600));
+      const intervalMs = Math.max(1000, Number(base.intervalMs || 2200));
+      let idx = 0;
+      let stopped = false;
+      let timer = null;
+      const pushOne = () => {
+        if (stopped) return;
+        const msg = String(phases[Math.min(idx, phases.length - 1)] || '').trim();
+        if (msg) pendingLogPush(state, msg);
+        idx += 1;
+        if (idx >= phases.length) idx = phases.length - 1;
+      };
+      timer = setTimeout(() => {
+        pushOne();
+        timer = setInterval(pushOne, intervalMs);
+      }, firstDelayMs);
+      return {
+        stop: () => {
+          stopped = true;
+          if (timer != null) {
+            clearTimeout(timer);
+            clearInterval(timer);
+          }
+        },
+      };
+    }
+
+    function latencySummaryLine(lat) {
+      if (!lat || typeof lat !== 'object') return '';
+      const items = [];
+      const push = (k, label) => {
+        const v = lat[k];
+        if (typeof v === 'number' && isFinite(v) && v >= 0) items.push(label + ' ' + Math.round(v) + 'ms');
+      };
+      push('total_ms', '총');
+      push('llm_answer_ms', 'LLM');
+      push('rag_ms', 'RAG');
+      push('legal_fetch_ms', '법령');
+      push('topic_classify_ms', '토픽');
+      if (!items.length) return '';
+      return '[지연 요약] ' + items.join(' · ');
+    }
+
     function finalizePendingSuccess(state) {
       if (!state || !state.status || !state.oneLine) return;
       state.status.setAttribute('hidden', '');
@@ -3226,6 +3274,7 @@
       const btn = document.getElementById('btnSend');
       btn.disabled = true;
       let pendingState = null;
+      let pendingTicker = null;
       try {
         let createdStream = false;
         if (!currentStreamId) {
@@ -3254,6 +3303,17 @@
         );
         if (createdStream) pendingLogPush(pendingState, '새 세션 생성됨');
         pendingLogPush(pendingState, reviewActive ? '보고자: 서버에 메시지 저장 중…' : '서버에 질의 전송 중…');
+        if (!reviewActive) {
+          const phases = isLegalOn()
+            ? [
+                '토픽 분류·의도 분석 중…',
+                'RAG 후보 검색·정렬 중…',
+                '법령 제목 제안·본문 조회 중…',
+                '최종 답변 생성 중…',
+              ]
+            : ['토픽 분류·의도 분석 중…', 'RAG 후보 검색·정렬 중…', '최종 답변 생성 중…'];
+          pendingTicker = startPendingPhaseTicker(pendingState, phases, { firstDelayMs: 700, intervalMs: 2400 });
+        }
 
         const res = await api('/api/v1/streams/auth/' + currentStreamId + '/messages', {
           method: 'POST',
@@ -3268,6 +3328,7 @@
         lastTopicId = res.topic_session_id;
 
         if (reviewActive) {
+          if (pendingTicker) pendingTicker.stop();
           pendingLogPush(pendingState, '보고자 반영 완료');
           finalizePendingSuccess(pendingState);
           pendingState = null;
@@ -3309,6 +3370,7 @@
         }
 
         pendingLogPush(pendingState, '응답 수신');
+        if (pendingTicker) pendingTicker.stop();
         if (res.chat_trace) {
           const tr = res.chat_trace;
           const rag = tr.rag || {};
@@ -3338,6 +3400,20 @@
               ' · 본문라우팅 ' +
               (leg.legal_routed_pipeline ? '사용' : '미사용'),
           );
+          const latLine = latencySummaryLine(tr.latency_ms || {});
+          if (latLine) pendingLogPush(pendingState, latLine);
+          if (tr.llm_runtime) {
+            const rt = tr.llm_runtime;
+            const rline =
+              '[LLM 런타임] provider=' +
+              (rt.provider || '?') +
+              ' · effective=' +
+              (rt.model_effective || tr.llm?.model || '?') +
+              ' · mode=' +
+              (rt.stream_mode || 'sync') +
+              (rt.fallback_used ? ' · fallback=예' : '');
+            pendingLogPush(pendingState, rline);
+          }
         }
         if (res.legal_debug) {
           const s = res.legal_debug.summary || '';
@@ -3415,6 +3491,7 @@
         runReviewTurnAfterAssistant().catch(() => {});
         loadMyPrompts();
       } catch (e) {
+        if (pendingTicker) pendingTicker.stop();
         if (pendingState) {
           pendingLogPush(pendingState, '오류: ' + e.message);
           finalizePendingError(pendingState, e.message);
@@ -3422,6 +3499,7 @@
           appLog('채팅 오류 | ' + e.message);
         }
       } finally {
+        if (pendingTicker) pendingTicker.stop();
         btn.disabled = false;
       }
     };

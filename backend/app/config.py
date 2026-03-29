@@ -27,9 +27,12 @@ class Settings:
     law_go_kr_service_max_ids: int
     law_go_kr_service_fetch: bool
     law_go_kr_extended_sources: bool
+    law_go_kr_timebox_sec: float
     law_go_kr_body_target: str
     law_go_kr_body_target_fallback: str
     system_fallback_model: str
+    model_complex_promote: bool
+    rag_hybrid_max_pool: int
     supabase_url: str
     supabase_anon_key: str
     supabase_jwt_secret: str
@@ -70,9 +73,24 @@ class Settings:
             "false",
             "no",
         )
+        try:
+            self.law_go_kr_timebox_sec = float(os.getenv("LAW_GO_KR_TIMEBOX_SEC", "12"))
+        except ValueError:
+            self.law_go_kr_timebox_sec = 12.0
+        self.law_go_kr_timebox_sec = max(3.0, min(self.law_go_kr_timebox_sec, 40.0))
         self.law_go_kr_body_target = os.getenv("LAW_GO_KR_BODY_TARGET", "eflaw").strip() or "eflaw"
         self.law_go_kr_body_target_fallback = os.getenv("LAW_GO_KR_BODY_TARGET_FALLBACK", "law").strip() or "law"
         self.system_fallback_model = os.getenv("SYSTEM_FALLBACK_MODEL", "gpt-4o-mini")
+        self.model_complex_promote = os.getenv("MODEL_COMPLEX_PROMOTE", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        try:
+            self.rag_hybrid_max_pool = int(os.getenv("RAG_HYBRID_MAX_POOL", "1200"))
+        except ValueError:
+            self.rag_hybrid_max_pool = 1200
+        self.rag_hybrid_max_pool = max(200, min(self.rag_hybrid_max_pool, 5000))
         self.supabase_url = os.getenv("SUPABASE_URL", "")
         self.supabase_anon_key = os.getenv("SUPABASE_ANON_KEY", "")
         self.supabase_jwt_secret = os.getenv("SUPABASE_JWT_SECRET", "")

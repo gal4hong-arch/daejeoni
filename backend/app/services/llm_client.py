@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 from openai import OpenAI
 from sqlalchemy import select
@@ -118,7 +119,9 @@ def chat_completion(
     temperature: float = 0.3,
     max_tokens: int = 8192,
     conversation_history: list[tuple[str, str]] | None = None,
+    meta_out: dict | None = None,
 ) -> str:
+    t0 = time.perf_counter()
     provider = _provider_for_model(model)
     if provider == "anthropic":
         from anthropic import Anthropic
@@ -146,7 +149,20 @@ def chat_completion(
             messages=hist_msgs,
         )
         parts = msg.content[0]
-        return getattr(parts, "text", str(parts)) if parts else ""
+        out = getattr(parts, "text", str(parts)) if parts else ""
+        if meta_out is not None:
+            meta_out.update(
+                {
+                    "provider": provider,
+                    "model_requested": model,
+                    "model_effective": mid,
+                    "llm_ms": round((time.perf_counter() - t0) * 1000, 2),
+                    "fallback_used": False,
+                    "stream_mode": "sync",
+                    "stream_capable": True,
+                }
+            )
+        return out
 
     if provider == "google":
         import google.generativeai as genai
@@ -166,7 +182,20 @@ def chat_completion(
             r = mdl.generate_content(f"{system}\n\n---\n\n{gemini_user}", generation_config=cfg)
         except Exception:
             r = mdl.generate_content(f"{system}\n\n---\n\n{gemini_user}")
-        return (r.text or "").strip()
+        out = (r.text or "").strip()
+        if meta_out is not None:
+            meta_out.update(
+                {
+                    "provider": provider,
+                    "model_requested": model,
+                    "model_effective": mid,
+                    "llm_ms": round((time.perf_counter() - t0) * 1000, 2),
+                    "fallback_used": False,
+                    "stream_mode": "sync",
+                    "stream_capable": True,
+                }
+            )
+        return out
 
     key = _get_openai_key(db, user_id)
     if not key:
@@ -181,7 +210,20 @@ def chat_completion(
         max_tokens=max_tokens,
         messages=oa_messages,
     )
-    return (r.choices[0].message.content or "").strip()
+    out = (r.choices[0].message.content or "").strip()
+    if meta_out is not None:
+        meta_out.update(
+            {
+                "provider": provider,
+                "model_requested": model,
+                "model_effective": model,
+                "llm_ms": round((time.perf_counter() - t0) * 1000, 2),
+                "fallback_used": False,
+                "stream_mode": "sync",
+                "stream_capable": True,
+            }
+        )
+    return out
 
 
 def chat_completion_with_fallback(
@@ -195,11 +237,13 @@ def chat_completion_with_fallback(
     temperature: float = 0.3,
     max_tokens: int = 8192,
     conversation_history: list[tuple[str, str]] | None = None,
+    meta_out: dict | None = None,
 ) -> tuple[str, str]:
     """검토자(서브) API 등 primary 실패·빈 응답 시 메인(fallback) 모델로 재시도. (본문, 실제 사용 모델 id) 반환."""
     pm = (primary_model or "").strip()
     fb = (fallback_model or "").strip()
     if not fb or fb == pm:
+        cm = {} if meta_out is not None else None
         out = chat_completion(
             db,
             user_id=user_id,
@@ -209,10 +253,15 @@ def chat_completion_with_fallback(
             temperature=temperature,
             max_tokens=max_tokens,
             conversation_history=conversation_history,
+            meta_out=cm,
         )
+        if meta_out is not None:
+            meta_out.update(cm or {})
+            meta_out["fallback_used"] = False
         return out, pm
 
     try:
+        pm_meta = {} if meta_out is not None else None
         out = chat_completion(
             db,
             user_id=user_id,
@@ -222,8 +271,10 @@ def chat_completion_with_fallback(
             temperature=temperature,
             max_tokens=max_tokens,
             conversation_history=conversation_history,
+            meta_out=pm_meta,
         )
     except Exception:
+        fb_meta = {} if meta_out is not None else None
         out = chat_completion(
             db,
             user_id=user_id,
@@ -233,11 +284,24 @@ def chat_completion_with_fallback(
             temperature=temperature,
             max_tokens=max_tokens,
             conversation_history=conversation_history,
+            meta_out=fb_meta,
         )
+        if meta_out is not None:
+            meta_out.update(fb_meta or {})
+            meta_out["fallback_used"] = True
+            meta_out["fallback_reason"] = "primary_exception"
+            meta_out["primary_model"] = pm
+            meta_out["fallback_model"] = fb
         return out, fb
 
     if (out or "").strip():
+        if meta_out is not None:
+            meta_out.update(pm_meta or {})
+            meta_out["fallback_used"] = False
+            meta_out["primary_model"] = pm
+            meta_out["fallback_model"] = fb
         return out, pm
+    fb_meta = {} if meta_out is not None else None
     out = chat_completion(
         db,
         user_id=user_id,
@@ -247,5 +311,12 @@ def chat_completion_with_fallback(
         temperature=temperature,
         max_tokens=max_tokens,
         conversation_history=conversation_history,
+        meta_out=fb_meta,
     )
+    if meta_out is not None:
+        meta_out.update(fb_meta or {})
+        meta_out["fallback_used"] = True
+        meta_out["fallback_reason"] = "primary_empty"
+        meta_out["primary_model"] = pm
+        meta_out["fallback_model"] = fb
     return out, fb

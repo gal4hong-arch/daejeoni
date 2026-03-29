@@ -23,6 +23,7 @@ def build_answer_runnable() -> RunnableLambda:
             legal_routed=bool(state.get("legal_routed")),
             law_query_analysis=state.get("law_query_analysis"),
             conversation_history=state.get("conversation_history"),
+            llm_meta_out=state.get("llm_meta_out"),
         )
 
     return RunnableLambda(_run)

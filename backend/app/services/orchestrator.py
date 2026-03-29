@@ -1,5 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+import time
 
 from app.config import get_settings
 from app.db.models import ChatMessage, MessageTopicMap
@@ -14,12 +15,16 @@ from app.services.legal_routed_pipeline import (
     propose_relevant_law_titles,
 )
 from app.services.law_user_stats import links_for_stats, record_law_hits
-from app.services.model_resolver import resolve_model
+from app.services.model_resolver import maybe_promote_model_for_complex_query, resolve_model
 from app.services.retrieval import hybrid_search
 from app.services.topic_manager import record_classification, route_message
 
 _PRIOR_MSG_MAX = 50
 _PRIOR_MSG_CHAR_CAP = 8000
+
+
+def _elapsed_ms(t0: float) -> float:
+    return round((time.perf_counter() - t0) * 1000, 2)
 
 
 def _prior_conversation_for_llm(
@@ -59,6 +64,8 @@ def process_chat_user_only(
     task: str,
 ) -> ChatResponse:
     """사용자 메시지만 저장·토픽 라우팅. 행정 AI 답변·RAG·법령 호출 없음(분할 검토 모드)."""
+    t_total = time.perf_counter()
+    timings: dict[str, float] = {}
     intent = classify_intent(content)
     if intent == "legal_focus":
         use_legal = True
@@ -69,12 +76,17 @@ def process_chat_user_only(
         role="user",
         content=content,
     )
+    t_db_user = time.perf_counter()
     db.add(user_msg)
     db.flush()
+    timings["db_user_msg_ms"] = _elapsed_ms(t_db_user)
 
+    t_topic = time.perf_counter()
     route = route_message(db, stream_id=stream_id, user_id=user_id, message=content)
     record_classification(db, message_id=user_msg.id, result=route)
+    timings["topic_classify_ms"] = _elapsed_ms(t_topic)
 
+    t_db_topic = time.perf_counter()
     db.add(
         MessageTopicMap(
             message_id=user_msg.id,
@@ -82,8 +94,10 @@ def process_chat_user_only(
         )
     )
     db.flush()
+    timings["db_topic_map_ms"] = _elapsed_ms(t_db_topic)
 
     model = resolve_model(db, user_id=user_id, topic_session_id=route.topic_session_id, task=effective_task)
+    model = maybe_promote_model_for_complex_query(model, content, get_settings())
 
     chat_trace = {
         "llm": {"model": model, "task": effective_task},
@@ -104,6 +118,8 @@ def process_chat_user_only(
         "compose": "none",
         "skip_assistant": True,
     }
+    timings["total_ms"] = _elapsed_ms(t_total)
+    chat_trace["latency_ms"] = timings
 
     return ChatResponse(
         answer="",
@@ -133,6 +149,8 @@ def process_chat(
     task: str,
     document_ids: list[str] | None = None,
 ) -> ChatResponse:
+    t_total = time.perf_counter()
+    timings: dict[str, float] = {}
     intent = classify_intent(content)
     if intent == "legal_focus":
         use_legal = True
@@ -143,11 +161,15 @@ def process_chat(
         role="user",
         content=content,
     )
+    t_db_user = time.perf_counter()
     db.add(user_msg)
     db.flush()
+    timings["db_user_msg_ms"] = _elapsed_ms(t_db_user)
 
+    t_topic = time.perf_counter()
     route = route_message(db, stream_id=stream_id, user_id=user_id, message=content)
     record_classification(db, message_id=user_msg.id, result=route)
+    timings["topic_classify_ms"] = _elapsed_ms(t_topic)
 
     db.add(
         MessageTopicMap(
@@ -159,6 +181,7 @@ def process_chat(
     rag_meta: dict = {}
     # document_ids == [] : RAG 소스 미선택 → 검색 생략. None : 기존처럼 전체 후보 풀.
     rag_skipped_no_selection = document_ids is not None and len(document_ids) == 0
+    t_rag = time.perf_counter()
     if rag_skipped_no_selection:
         chunks = []
         rag_meta = {"pool_size": 0, "document_ids_filter": False, "document_ids_count": 0, "skipped_no_selection": True}
@@ -171,6 +194,7 @@ def process_chat(
             document_ids=document_ids,
             meta_out=rag_meta,
         )
+    timings["rag_ms"] = _elapsed_ms(t_rag)
     sources = [
         {
             "chunk_id": c.chunk_id,
@@ -186,6 +210,7 @@ def process_chat(
     oc = (getattr(settings, "law_go_kr_oc", None) or "").strip()
 
     model = resolve_model(db, user_id=user_id, topic_session_id=route.topic_session_id, task=effective_task)
+    model = maybe_promote_model_for_complex_query(model, content, settings)
 
     legal_note = None
     legal_result = None
@@ -194,10 +219,12 @@ def process_chat(
     legal_routed = False
 
     law_query_analysis: LawQueryAnalysis | None = None
+    t_legal = time.perf_counter()
+    llm_legal_meta: dict = {}
     if use_legal and oc:
         legal_routed = True
         titles, raw_prop, law_query_analysis = propose_relevant_law_titles(
-            db, user_id=user_id, model=model, user_message=content
+            db, user_id=user_id, model=model, user_message=content, llm_meta_out=llm_legal_meta
         )
         legal_result, used_law_refs = fetch_legal_bodies_for_titles(
             db,
@@ -222,10 +249,15 @@ def process_chat(
         legal_result = fetch_legal(db, topic_session_id=route.topic_session_id, query=content)
         legal_debug = getattr(legal_result, "debug", None) or None
         legal_note = legal_result.warning or ("스텁/조회 결과가 답변에 반영되었습니다." if legal_result.text else None)
+    timings["legal_fetch_ms"] = _elapsed_ms(t_legal)
 
+    t_hist = time.perf_counter()
     conversation_history = _prior_conversation_for_llm(
         db, stream_id=stream_id, before_message_id=user_msg.id
     )
+    timings["history_ms"] = _elapsed_ms(t_hist)
+    llm_answer_meta: dict = {}
+    t_llm = time.perf_counter()
     answer = build_answer_runnable().invoke(
         {
             "db": db,
@@ -237,8 +269,10 @@ def process_chat(
             "legal_routed": legal_routed,
             "law_query_analysis": law_query_analysis if legal_routed else None,
             "conversation_history": conversation_history,
+            "llm_meta_out": llm_answer_meta,
         }
     )
+    timings["llm_answer_ms"] = _elapsed_ms(t_llm)
 
     law_appendix: str | None = None
     resolved_links: list[dict[str, str]] = []
@@ -271,6 +305,7 @@ def process_chat(
                 seen_u.add(u)
         legal_debug["links"] = base_links
 
+    t_db_asst = time.perf_counter()
     asst = ChatMessage(
         conversation_stream_id=stream_id,
         role="assistant",
@@ -278,6 +313,7 @@ def process_chat(
     )
     db.add(asst)
     db.flush()
+    timings["db_assistant_ms"] = _elapsed_ms(t_db_asst)
     db.add(
         MessageTopicMap(
             message_id=asst.id,
@@ -294,8 +330,10 @@ def process_chat(
         used_law_refs=used_law_refs,
         resolved_links=resolved_links,
     )
+    t_stats = time.perf_counter()
     if stats_refs:
         record_law_hits(db, user_id, stats_refs)
+    timings["law_stats_ms"] = _elapsed_ms(t_stats)
 
     doc_ids_sent = document_ids if document_ids else []
     rag_note = (
@@ -313,9 +351,13 @@ def process_chat(
         "rag": {
             "document_ids_selected": len(doc_ids_sent),
             "candidate_pool_chunks": rag_meta.get("pool_size", 0),
+            "candidate_pool_cap": rag_meta.get("pool_cap"),
             "chunks_in_prompt": len(chunks),
             "filter_by_documents_only": rag_meta.get("document_ids_filter", False),
             "skipped_no_selection": rag_skipped_no_selection,
+            "top_k": rag_meta.get("top_k"),
+            "embed_ms": rag_meta.get("embed_ms"),
+            "embed_cache_hit": rag_meta.get("embed_cache_hit"),
             "top_source_titles": [c.source_title[:120] for c in chunks[:5]],
             "note": rag_note,
         },
@@ -327,6 +369,12 @@ def process_chat(
         "intent": intent,
         "compose": "langchain_lcel",
     }
+    timings["total_ms"] = _elapsed_ms(t_total)
+    chat_trace["latency_ms"] = timings
+    if llm_answer_meta:
+        chat_trace["llm_runtime"] = llm_answer_meta
+    if llm_legal_meta:
+        chat_trace["legal_llm_runtime"] = llm_legal_meta
 
     return ChatResponse(
         answer=final_answer,
